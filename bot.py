@@ -17,16 +17,17 @@ from telegram.ext import (
 # =========================================================
 
 # TOKEN KODUN İÇİNE YAZILMAZ.
-# Railway Variables:
-# BOT_TOKEN=...
+# Railway Variables bölümüne:
+# BOT_TOKEN = YENI_BOT_TOKENIN
 BOT_TOKEN = '8855111211:AAFhY9oBPMEAR9jDd1WhwN2nZmFpZXMUX4s'
 
-# Railway Variables:
+# Railway Variables bölümüne:
 # ADMIN_IDS=8845737995
 #
 # Birden fazla admin:
 # ADMIN_IDS=8845737995,123456789
 ADMIN_IDS_RAW = os.getenv("ADMIN_IDS", "").strip()
+
 
 # =========================================================
 # SADECE BU TELEGRAM GRUBUNDA ÇALIŞIR
@@ -34,7 +35,11 @@ ADMIN_IDS_RAW = os.getenv("ADMIN_IDS", "").strip()
 
 ALLOWED_GROUP_USERNAME = "heroprimesohbet"
 
-# Railway Volume kullanırsan DB_FILE değişkeninden yol verebilirsin.
+
+# =========================================================
+# DATABASE
+# =========================================================
+
 DB_FILE = os.getenv("DB_FILE", "giveaway.db")
 
 
@@ -356,7 +361,6 @@ async def start_giveaway(
     now = datetime.now(timezone.utc).isoformat()
 
     connection = get_db()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -611,6 +615,7 @@ async def stop_giveaway(
                 ),
                 parse_mode="HTML",
             )
+
         except Exception as error:
             logger.warning(
                 "Çekiliş mesajı düzenlenemedi: %s",
