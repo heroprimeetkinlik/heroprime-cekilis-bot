@@ -548,19 +548,7 @@ async def join_giveaway(
     # Katılım sayısını ana çekiliş mesajına yansıt.
     await update_giveaway_message(context, active)
 
-    telegram_identity = (
-        f"@{telegram_username}"
-        if telegram_username
-        else telegram_name
-    )
-
-    await message.reply_text(
-        "✅ <b>Çekilişe katılımın kaydedildi!</b>\n\n"
-        f"👤 Telegram: {escape(telegram_identity)}\n"
-        f"🎟 Kullanıcı adı: @{escape(entered_username)}\n\n"
-        "🍀 Bol şans!",
-        parse_mode="HTML",
-    )
+    # Katılım kaydedildi. Kullanıcıya ayrıca mesaj gönderilmez.
 
 
 # =========================================================
