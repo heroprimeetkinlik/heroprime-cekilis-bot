@@ -12,9 +12,9 @@ from html import escape
 
 
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 
 
@@ -27,11 +27,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 
 # Railway > Variables bölümüne BOT_TOKEN ekle.
-
 BOT_TOKEN = '8855111211:AAE5iUsRRxqVmUSPVGpd5nu-Ruc2XPH7w6o'
-
-
-
 # Admin Telegram ID
 
 ADMIN_IDS_RAW = "8845737995"
@@ -53,6 +49,7 @@ ALLOWED_CHAT_USERNAMES = {
     "heroprimesohbet",
 
     "testkanaliii00",
+    "heroprimeduyuru",
 
 }
 
@@ -312,6 +309,11 @@ def init_database():
 
         """
 
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+
         CREATE TABLE IF NOT EXISTS participants (
 
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -423,27 +425,7 @@ def get_participant_count(giveaway_id: int) -> int:
 
 
 def build_giveaway_text(winner_count: int, participant_count: int) -> str:
-
-    return (
-
-        "🎉 <b>HEROPRIME ÇEKİLİŞ BAŞLADI!</b>\n\n"
-
-        "🎁 Çekilişe katılmak için bu mesaja yanıt vererek:\n"
-
-        "<code>/katil kullanıcı_adınız</code>\n"
-
-        "yazın.\n\n"
-
-        f"🏆 Kazanan sayısı: <b>{winner_count}</b>\n"
-
-        f"👥 Katılımcı: <b>{participant_count}</b>\n\n"
-
-        "🍀 <b>Herkese bol şans!</b>"
-
-    )
-
-
-
+    return format_giveaway_text(winner_count, participant_count)
 
 
 def build_finished_text(
@@ -505,6 +487,7 @@ async def update_giveaway_message(
             ),
 
             parse_mode="HTML",
+            reply_markup=giveaway_keyboard(),
 
         )
 
@@ -574,7 +557,8 @@ async def start_command(
 
             "/cekilisdurum - Çekiliş durumu\n"
 
-            "/stopcekilis - Çekilişi bitir",
+            "/stopcekilis - Çekilişi bitir\n"
+            "/cekilismet - Çekiliş metnini değiştir",
 
             parse_mode="HTML",
 
@@ -698,10 +682,19 @@ async def start_giveaway(
     # Önce mesajı gönderiyoruz. 
     # Kullanıcılar bu mesaja yanıt vererek katılacak. 
     try: 
-        giveaway_message = await message.reply_text( 
-            build_giveaway_text(winner_count, 0), 
-            parse_mode="HTML", 
-        ) 
+        if chat.type == "channel":
+            giveaway_message = await context.bot.send_message(
+                chat_id=chat.id,
+                text=build_giveaway_text(winner_count, 0),
+                parse_mode="HTML",
+                reply_markup=giveaway_keyboard(),
+            )
+        else:
+            giveaway_message = await message.reply_text(
+                build_giveaway_text(winner_count, 0),
+                parse_mode="HTML",
+                reply_markup=giveaway_keyboard(),
+            ) 
     except Exception as error: 
         logger.exception( 
             "Çekiliş mesajı gönderilemedi: %s", 
@@ -772,108 +765,75 @@ async def start_giveaway(
 # /KATIL 
 # ========================================================= 
  
-async def join_giveaway( 
-    update: Update, 
-    context: ContextTypes.DEFAULT_TYPE, 
-): 
-    message = update.effective_message 
-    chat = update.effective_chat 
-    user = update.effective_user 
- 
-    if not user or not chat or not message: 
-        return 
- 
-    if not is_allowed_chat(update): 
-        return 
- 
-    active = get_active_giveaway() 
- 
-    if not active: 
-        await message.reply_text("❌ Şu anda aktif bir çekiliş yok.") 
-        return 
- 
-    if active["chat_id"] != chat.id: 
-        await message.reply_text( 
-            "❌ Bu sohbette aktif çekiliş bulunmuyor." 
-        ) 
-        return 
- 
-    # /katil, çekiliş mesajına yanıt olarak kullanılmalı. 
-    reply_to = message.reply_to_message 
- 
-    if not reply_to or reply_to.message_id != active["message_id"]: 
-        await message.reply_text( 
-            "❌ Katılmak için /katil komutunu çekiliş mesajına " 
-            "yanıt vererek kullanmalısın.\n\n" 
-            "Örnek:\n" 
-            "<code>/katil kullaniciadim</code>", 
-            parse_mode="HTML", 
-        ) 
-        return 
- 
-    if len(context.args) != 1: 
-        await message.reply_text( 
-            "❌ Kullanım:\n" 
-            "<code>/katil kullaniciadim</code>", 
-            parse_mode="HTML", 
-        ) 
-        return 
- 
-    entered_username = context.args[0].strip().lstrip("@") 
- 
-    if not entered_username: 
-        await message.reply_text( 
-            "❌ Geçerli bir kullanıcı adı yazmalısın." 
-        ) 
-        return 
- 
-    telegram_username = user.username or None 
-    telegram_name = user.full_name or "İsimsiz kullanıcı" 
- 
-    connection = get_db() 
- 
-    try: 
-        connection.execute( 
-            """ 
-            INSERT INTO participants ( 
-                giveaway_id, 
-                telegram_user_id, 
-                telegram_username, 
-                telegram_name, 
-                entered_username, 
-                joined_at 
-            ) 
-            VALUES (?, ?, ?, ?, ?, ?) 
-            """, 
-            ( 
-                active["id"], 
-                user.id, 
-                telegram_username, 
-                telegram_name, 
-                entered_username, 
-                utc_now(), 
-            ), 
-        ) 
- 
-        connection.commit() 
- 
-    except sqlite3.IntegrityError: 
-        connection.close() 
- 
-        await message.reply_text( 
-            "⚠️ Bu çekilişe zaten katıldın.\n" 
-            "Aynı Telegram hesabıyla ikinci kez katılamazsın." 
-        ) 
-        return 
- 
-    connection.close() 
- 
-    # Katılım sayısını ana çekiliş mesajına yansıt. 
-    await update_giveaway_message(context, active) 
- 
-    # Katılım kaydedildi. Kullanıcıya ayrıca mesaj gönderilmez. 
- 
- 
+async def join_giveaway(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    if message:
+        await message.reply_text(
+            "ℹ️ Çekilişe katılmak için çekiliş mesajındaki <b>🎟️ KATIL</b> butonuna basmalısın.",
+            parse_mode="HTML",
+        )
+
+
+async def giveaway_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query:
+        return
+    user = query.from_user
+    active = get_active_giveaway()
+
+    if not active:
+        await query.answer("❌ Şu anda aktif bir çekiliş yok.", show_alert=True)
+        return
+
+    if query.message and (
+        query.message.chat_id != active["chat_id"]
+        or query.message.message_id != active["message_id"]
+    ):
+        await query.answer("❌ Bu çekiliş artık aktif değil.", show_alert=True)
+        return
+
+    connection = get_db()
+    try:
+        connection.execute(
+            """INSERT INTO participants (
+                giveaway_id, telegram_user_id, telegram_username,
+                telegram_name, entered_username, joined_at
+            ) VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                active["id"],
+                user.id,
+                user.username,
+                user.full_name or "İsimsiz kullanıcı",
+                user.username or user.full_name or str(user.id),
+                utc_now(),
+            ),
+        )
+        connection.commit()
+    except sqlite3.IntegrityError:
+        await query.answer("⚠️ Bu çekilişe zaten katıldın.", show_alert=True)
+        return
+    finally:
+        connection.close()
+
+    refreshed = get_active_giveaway()
+    if refreshed:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=refreshed["chat_id"],
+                message_id=refreshed["message_id"],
+                text=build_giveaway_text(
+                    refreshed["winner_count"],
+                    get_participant_count(refreshed["id"]),
+                ),
+                parse_mode="HTML",
+                reply_markup=giveaway_keyboard(),
+            )
+        except Exception as error:
+            logger.warning("Katılım sonrası mesaj güncellenemedi: %s", error)
+
+    await query.answer("🎉 Çekilişe başarıyla katıldın!", show_alert=True)
+
+
 # ========================================================= 
 # /STOPCEKILIS 
 # ========================================================= 
@@ -1195,8 +1155,14 @@ def main():
     application.add_handler( 
         CommandHandler("cekilis", start_giveaway) 
     ) 
-    application.add_handler( 
-        CommandHandler("katil", join_giveaway) 
+    application.add_handler(
+        CommandHandler("katil", join_giveaway)
+    )
+    application.add_handler(
+        CallbackQueryHandler(giveaway_join_callback, pattern=r"^giveaway_join$")
+    )
+    application.add_handler(
+        CommandHandler("cekilismet", giveaway_text_command)
     ) 
     application.add_handler( 
         CommandHandler("stopcekilis", stop_giveaway) 
