@@ -716,7 +716,7 @@ async def start_giveaway(
         await context.bot.send_message(
             chat_id=ADMIN_RESULT_CHAT_ID,
             text=(
-                "🎉 <b>HEROPRIME ÇEKİLİŞ BAŞLADI!</b>\\n\\n"
+                "🎉 <b>HEROPRIME ÇEKİLİŞ BAŞLADI!</b>\n\n"
                 f"🏆 Kazanan sayısı: <b>{winner_count}</b>\\n"
                 f"💬 Çekiliş grubu: <b>{escape(chat.title or str(chat.id))}</b>\\n"
                 "🟢 Çekiliş aktif. Katılımlar alınmaya başladı."
@@ -1224,5 +1224,5 @@ def main():
     ) 
  
  
-if __name__ == "__main__": 
-    main() özelden niye bana mesaj gelmiyor bottan ? 
+if __name__ == "__main__":
+    main() 
