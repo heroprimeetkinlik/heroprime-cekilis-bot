@@ -5,7 +5,12 @@ import logging
 from datetime import datetime, timezone
 from html import escape
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -21,18 +26,29 @@ from telegram.ext import (
 # =========================================================
 
 # Railway > Variables:
-# BOT_TOKEN = BotFather'dan aldığın yeni token
+#
+# BOT_TOKEN = BotFather'dan aldığın YENİ token
+#
+# Tokenı kodun içine yazmıyoruz.
 BOT_TOKEN = '8855111211:AAE5iUsRRxqVmUSPVGpd5nu-Ruc2XPH7w6o'
 
 # HeroPrimeMarketing Telegram ID
-ADMIN_IDS_RAW = os.getenv("ADMIN_IDS", "8845737995")
+ADMIN_IDS_RAW = os.getenv(
+    "ADMIN_IDS",
+    "8845737995",
+)
+
 
 # Çekiliş sonuçlarının gönderileceği yönetici
 ADMIN_RESULT_CHAT_ID = int(
-    os.getenv("ADMIN_RESULT_CHAT_ID", "8845737995")
+    os.getenv(
+        "ADMIN_RESULT_CHAT_ID",
+        "8845737995",
+    )
 )
 
 ADMIN_RESULT_USERNAME = "@HeroPrimeMarketing"
+
 
 # =========================================================
 # ÇEKİLİŞ YAPILABİLECEK YERLER
@@ -43,14 +59,17 @@ ALLOWED_CHAT_USERNAMES = {
     "heroprimesohbet",
 }
 
+
 # Gerçek Telegram kanal postlarında Telegram,
-# postu gönderen insanın user_id'sini vermez.
+# postu gönderen insanın user_id'sini vermeyebilir.
 #
 # Bu nedenle bu kanal doğrudan yönetim kanalıdır.
 MANAGEMENT_CHANNEL_USERNAME = "heroprimeduyuru"
 
+
 # Mevcut test kanalı
 TEST_CHANNEL_USERNAME = "@testkanaliii00"
+
 
 # =========================================================
 # DATABASE
@@ -61,11 +80,13 @@ DB_FILE = os.getenv(
     "giveaway.db",
 )
 
+
 # =========================================================
 # CALLBACK
 # =========================================================
 
 JOIN_CALLBACK_PREFIX = "giveaway_join:"
+
 
 # =========================================================
 # VARSAYILAN ÇEKİLİŞ METNİ
@@ -84,7 +105,10 @@ DEFAULT_GIVEAWAY_TEXT = (
 # =========================================================
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format=(
+        "%(asctime)s - %(name)s - "
+        "%(levelname)s - %(message)s"
+    ),
     level=logging.INFO,
 )
 
@@ -128,16 +152,26 @@ def is_admin(user_id: int) -> bool:
 # =========================================================
 
 def normalize_username(username: str) -> str:
-    return username.strip().lstrip("@").lower()
+    return (
+        username
+        .strip()
+        .lstrip("@")
+        .lower()
+    )
 
 
 def get_chat_username(chat) -> str:
     return normalize_username(
-        getattr(chat, "username", "") or ""
+        getattr(
+            chat,
+            "username",
+            "",
+        ) or ""
     )
 
 
 def is_allowed_chat(update: Update) -> bool:
+
     chat = update.effective_chat
 
     if not chat:
@@ -161,6 +195,7 @@ def is_allowed_chat(update: Update) -> bool:
 
 
 def is_management_channel(update: Update) -> bool:
+
     chat = update.effective_chat
 
     if not chat:
@@ -185,6 +220,7 @@ def allowed_chat_text() -> str:
 
 
 def get_db():
+
     connection = sqlite3.connect(
         DB_FILE,
         timeout=30,
@@ -199,6 +235,74 @@ def utc_now() -> str:
     return datetime.now(
         timezone.utc
     ).isoformat()
+
+
+# =========================================================
+# WEBHOOK TEMİZLEME
+# =========================================================
+#
+# BOT POLLING İLE ÇALIŞACAK.
+#
+# Eğer Telegram tarafında daha önce webhook kurulmuşsa,
+# polling'deki getUpdates çağrısı 409 Conflict verir.
+#
+# Bu fonksiyon bot başlamadan ÖNCE webhook'u kontrol eder
+# ve varsa otomatik olarak kaldırır.
+#
+# drop_pending_updates=False:
+# Bekleyen Telegram güncellemeleri SİLİNMEZ.
+#
+# Çekiliş başladı/bitti mesajları ve botun kendi
+# send_message işlemleri bundan etkilenmez.
+# =========================================================
+
+async def post_init(
+    application: Application,
+):
+
+    try:
+
+        webhook_info = (
+            await application.bot.get_webhook_info()
+        )
+
+        webhook_url = (
+            webhook_info.url or ""
+        )
+
+        if webhook_url:
+
+            logger.warning(
+                "Aktif Telegram webhook bulundu: %s",
+                webhook_url,
+            )
+
+            await application.bot.delete_webhook(
+                drop_pending_updates=False
+            )
+
+            logger.info(
+                "Telegram webhook başarıyla kaldırıldı."
+            )
+
+        else:
+
+            logger.info(
+                "Aktif Telegram webhook bulunamadı."
+            )
+
+        logger.info(
+            "Polling modu hazırlanıyor."
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "Webhook kontrolü/silinmesi sırasında hata: %s",
+            error,
+        )
+
+        raise
 
 
 # =========================================================
@@ -220,16 +324,7 @@ async def can_manage_giveaway(
     # =====================================================
     # KANAL
     # =====================================================
-    #
-    # Telegram channel postlarında:
-    #
-    # effective_user = None
-    #
-    # olabilir.
-    #
-    # Bu yüzden @heroprimeduyuru doğrudan yönetim kanalı
-    # olarak kabul ediliyor.
-    #
+
     if is_management_channel(update):
         return True
 
@@ -247,9 +342,12 @@ async def can_manage_giveaway(
     ):
 
         try:
-            member = await context.bot.get_chat_member(
-                chat_id=chat.id,
-                user_id=user.id,
+
+            member = (
+                await context.bot.get_chat_member(
+                    chat_id=chat.id,
+                    user_id=user.id,
+                )
             )
 
             return member.status in (
@@ -278,9 +376,11 @@ async def is_test_channel_member(
 
     try:
 
-        member = await context.bot.get_chat_member(
-            chat_id=TEST_CHANNEL_USERNAME,
-            user_id=user_id,
+        member = (
+            await context.bot.get_chat_member(
+                chat_id=TEST_CHANNEL_USERNAME,
+                user_id=user_id,
+            )
         )
 
         return member.status in (
@@ -611,8 +711,10 @@ async def update_giveaway_message(
     giveaway,
 ):
 
-    participant_count = get_participant_count(
-        giveaway["id"]
+    participant_count = (
+        get_participant_count(
+            giveaway["id"]
+        )
     )
 
     custom_text = get_giveaway_text()
@@ -681,9 +783,11 @@ async def start_command(
     # Normal kullanıcı özel mesajı
     if message.chat.type == "private":
 
-        is_member = await is_test_channel_member(
-            context,
-            user.id,
+        is_member = (
+            await is_test_channel_member(
+                context,
+                user.id,
+            )
         )
 
         if not is_member:
@@ -1002,15 +1106,14 @@ async def start_giveaway(
 
     try:
 
-        # send_message kullanıyoruz.
-        # Kanal postlarında reply_text'ten daha güvenlidir.
-
         giveaway_message = (
             await context.bot.send_message(
                 chat_id=chat.id,
                 text=initial_text,
                 parse_mode="HTML",
-                reply_markup=build_join_keyboard(0),
+                reply_markup=build_join_keyboard(
+                    0
+                ),
             )
         )
 
@@ -1038,7 +1141,6 @@ async def start_giveaway(
     # BAŞLATAN KULLANICI
     # =====================================================
 
-    # Kanal postlarında effective_user olmayabilir.
     if update.effective_user:
 
         started_by = (
@@ -1559,7 +1661,7 @@ async def stop_giveaway(
 
         no_winner_text = (
             "🏁 <b>HEROPRIME ÇEKİLİŞ SONA ERDİ!</b>\n\n"
-            f"👥 Toplam katılımcı: <b>0</b>\n"
+            "👥 Toplam katılımcı: <b>0</b>\n"
             f"🏆 Kazanan sayısı: "
             f"<b>{active['winner_count']}</b>\n\n"
             "❌ Bu çekilişte kazanan bulunamadı.\n\n"
@@ -1839,6 +1941,10 @@ async def error_handler(
 
 def main():
 
+    # =====================================================
+    # TOKEN KONTROLÜ
+    # =====================================================
+
     if not BOT_TOKEN:
 
         raise RuntimeError(
@@ -1846,17 +1952,40 @@ def main():
             "bulunamadı."
         )
 
+    # =====================================================
+    # ADMIN KONTROLÜ
+    # =====================================================
+
     if not ADMIN_IDS:
 
         raise RuntimeError(
             "Admin ID bulunamadı."
         )
 
+    # =====================================================
+    # DATABASE
+    # =====================================================
+
     init_database()
+
+    # =====================================================
+    # APPLICATION
+    # =====================================================
+    #
+    # ÖNEMLİ:
+    #
+    # .post_init(post_init)
+    #
+    # sayesinde bot başlamadan önce Telegram'daki
+    # eski webhook otomatik kontrol edilir ve silinir.
+    #
+    # Böylece getUpdates / polling ile webhook çakışmaz.
+    # =====================================================
 
     application = (
         Application.builder()
         .token(BOT_TOKEN)
+        .post_init(post_init)
         .build()
     )
 
@@ -1937,9 +2066,17 @@ def main():
         )
     )
 
+    # =====================================================
+    # ERROR HANDLER
+    # =====================================================
+
     application.add_error_handler(
         error_handler
     )
+
+    # =====================================================
+    # LOG
+    # =====================================================
 
     logger.info(
         "HEROPRIME Çekiliş Botu başlatılıyor..."
@@ -1960,10 +2097,22 @@ def main():
         ADMIN_RESULT_USERNAME,
     )
 
+    logger.info(
+        "Polling modu aktif."
+    )
+
+    # =====================================================
+    # POLLING
+    # =====================================================
+
     application.run_polling(
         allowed_updates=Update.ALL_TYPES
     )
 
+
+# =========================================================
+# PROGRAM BAŞLANGICI
+# =========================================================
 
 if __name__ == "__main__":
     main()
