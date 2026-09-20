@@ -17,7 +17,7 @@ from telegram.ext import (
 # =========================================================
 
 # BOT TOKEN RAILWAY VARIABLES İÇİNDEN ALINIR
-BOT_TOKEN = '8855111211:AAFhY9oBPMEAR9jDd1WhwN2nZmFpZXMUX4s'
+BOT_TOKEN = '8855111211:AAE5iUsRRxqVmUSPVGpd5nu-Ruc2XPH7w6o'
 
 # ADMIN ID
 ADMIN_IDS_RAW = "8845737995"
