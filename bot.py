@@ -26,7 +26,7 @@ BOT_TOKEN = '8855111211:AAFhY9oBPMEAR9jDd1WhwN2nZmFpZXMUX4s'
 #
 # Birden fazla admin:
 # ADMIN_IDS=8845737995,123456789
-ADMIN_IDS_RAW = os.getenv("ADMIN_IDS", "").strip()
+ADMIN_IDS_RAW = "8845737995"
 
 
 # =========================================================
