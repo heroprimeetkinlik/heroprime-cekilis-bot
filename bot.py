@@ -548,7 +548,23 @@ async def join_giveaway(
     # Katılım sayısını ana çekiliş mesajına yansıt.
     await update_giveaway_message(context, active)
 
-    # Katılım kaydedildi. Kullanıcıya ayrıca mesaj gönderilmez.
+    # Katılım grupta gösterilmez; kullanıcıya özelden bildirim gönderilir.
+    try:
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=(
+                "✅ <b>Çekilişe katılımın başarıyla kaydedildi!</b>\n\n"
+                f"👤 Telegram: {escape(telegram_name)}\n"
+                f"🎟 Kullanıcı adı: @{escape(entered_username)}\n\n"
+                "🍀 Bol şans!"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as error:
+        logger.warning(
+            "Katılım başarı mesajı kullanıcıya özelden gönderilemedi: %s",
+            error,
+        )
 
 
 # =========================================================
