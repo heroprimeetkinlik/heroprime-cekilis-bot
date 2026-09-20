@@ -1069,7 +1069,7 @@ async def stop_giveaway(
             "🏁 <b>Çekiliş sonlandırıldı!</b>\n\n" 
             f"👥 Toplam katılımcı: <b>{participant_count}</b>\n" 
             f"🏆 Kazanan: <b>{winner_count}</b>\n\n" 
-            "📩 Kazanan bilgileri sana özelden gönderildi.", 
+            "✅ Kazanan Arkadaşları Tebrik Ederim.", 
             parse_mode="HTML", 
         ) 
     except Exception as error: 
