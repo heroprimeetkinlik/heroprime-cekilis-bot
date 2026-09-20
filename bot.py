@@ -26,7 +26,10 @@ ADMIN_IDS_RAW = "8845737995"
 # ANA ÇEKİLİŞ GRUBU
 # =========================================================
 
-ALLOWED_GROUP_USERNAME = "heroprimesohbet"
+ALLOWED_GROUP_USERNAMES = {
+    "heroprimesohbet",
+    "testkanaliii00",
+}
 
 # =========================================================
 # TEST / YEDEK KANAL
