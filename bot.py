@@ -13,7 +13,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # =========================================================
 
 # Railway > Variables bölümüne BOT_TOKEN ekle.
-BOT_TOKEN = '8855111211:AAE5iUsRRxqVmUSPVGpd5nu-Ruc2XPH7w6o'
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
 # Admin Telegram ID
 ADMIN_IDS_RAW = "8845737995"
