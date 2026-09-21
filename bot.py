@@ -30,7 +30,80 @@ from telegram.ext import (
 # BOT_TOKEN = BotFather'dan aldığın YENİ token
 #
 # Tokenı kodun içine yazmıyoruz.
+
 BOT_TOKEN = '8855111211:AAFM2NaMfV1e01Nv8xo_d_F0QFzULMM53Zg'
+
+# ------------------------------------------------------------
+# SINGLE INSTANCE LOCK
+# Prevents two copies of this bot from polling with the same
+# token inside the same machine/container.
+# ------------------------------------------------------------
+BOT_LOCK_FILE = os.getenv(
+    "BOT_LOCK_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), ".heroprime_bot.lock")
+)
+
+_bot_lock_handle = None
+
+def acquire_single_instance_lock() -> None:
+    global _bot_lock_handle
+
+    try:
+        import fcntl
+    except ImportError:
+        # Windows fallback: atomic file creation.
+        try:
+            _bot_lock_handle = open(BOT_LOCK_FILE, "x", encoding="utf-8")
+            _bot_lock_handle.write(str(os.getpid()))
+            _bot_lock_handle.flush()
+            return
+        except FileExistsError:
+            raise RuntimeError(
+                "Bu ortamda HEROPRIME botunun ikinci bir instance'ı çalışıyor. "
+                f"Lock: {BOT_LOCK_FILE}"
+            )
+
+    _bot_lock_handle = open(BOT_LOCK_FILE, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(_bot_lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _bot_lock_handle.seek(0)
+        _bot_lock_handle.truncate()
+        _bot_lock_handle.write(str(os.getpid()))
+        _bot_lock_handle.flush()
+    except (BlockingIOError, OSError):
+        _bot_lock_handle.close()
+        _bot_lock_handle = None
+        raise RuntimeError(
+            "Bu ortamda HEROPRIME botunun başka bir instance'ı zaten çalışıyor."
+        )
+
+def release_single_instance_lock() -> None:
+    global _bot_lock_handle
+
+    if _bot_lock_handle is None:
+        return
+
+    try:
+        if "fcntl" in globals():
+            import fcntl
+            fcntl.flock(_bot_lock_handle.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+
+    try:
+        _bot_lock_handle.close()
+    except Exception:
+        pass
+
+    _bot_lock_handle = None
+
+    # Windows fallback uses an actual file that must be removed.
+    try:
+        if os.path.exists(BOT_LOCK_FILE):
+            os.remove(BOT_LOCK_FILE)
+    except Exception:
+        pass
+
 
 # HeroPrimeMarketing Telegram ID
 ADMIN_IDS_RAW = os.getenv(
@@ -2105,9 +2178,26 @@ def main():
     # POLLING
     # =====================================================
 
+    try:
     application.run_polling(
-        allowed_updates=Update.ALL_TYPES
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
     )
+except Exception as exc:
+    error_text = str(exc)
+
+    # Telegram 409 means another getUpdates consumer is using this token.
+    if "Conflict" in error_text or "terminated by other getUpdates request" in error_text:
+        print(
+            "\n[TELEGRAM 409] Bu BOT_TOKEN ile başka bir polling instance'ı "
+            "Telegram'dan getUpdates alıyor.\n"
+            "Bu proses tekrar tekrar bağlanmaya çalışmayacak. "
+            "Diğer instance kapatılmalıdır.\n"
+        )
+    else:
+        raise
+finally:
+    release_single_instance_lock()
 
 
 # =========================================================
