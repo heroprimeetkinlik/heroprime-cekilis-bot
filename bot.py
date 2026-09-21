@@ -10,6 +10,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
+from telegram.error import Conflict
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -19,21 +20,44 @@ from telegram.ext import (
     filters,
 )
 
+
 # =========================================================
 # AYARLAR
 # =========================================================
 
-# Railway > Variables
-BOT_TOKEN = '8855111211:AAEP_Whgvs650b8Jy1jVmuk9J1uA-j6nbUI'
+# Railway > Variables > BOT_TOKEN
+#
+# TOKEN KESİNLİKLE KODUN İÇİNE YAZILMAYACAK.
+#
+BOT_TOKEN = '8855111211:AAEmD37GcwYfgndcQTPGfnLpVoJ622Ot8ek'
 
-# Adminler
-ADMIN_IDS_RAW = os.getenv("ADMIN_IDS", "8845737995").strip()
 
-ADMIN_RESULT_CHAT_ID = int(
-    os.getenv("ADMIN_RESULT_CHAT_ID", "8845737995")
-)
+# =========================================================
+# ADMİNLER
+# =========================================================
+
+ADMIN_IDS_RAW = os.getenv(
+    "ADMIN_IDS",
+    "8845737995",
+).strip()
+
+
+ADMIN_RESULT_CHAT_ID_RAW = os.getenv(
+    "ADMIN_RESULT_CHAT_ID",
+    "8845737995",
+).strip()
+
+
+try:
+    ADMIN_RESULT_CHAT_ID = int(
+        ADMIN_RESULT_CHAT_ID_RAW
+    )
+except ValueError:
+    ADMIN_RESULT_CHAT_ID = 0
+
 
 ADMIN_RESULT_USERNAME = "@HeroPrimeMarketing"
+
 
 # =========================================================
 # İZİNLİ SOHBETLER
@@ -44,10 +68,11 @@ ALLOWED_CHAT_USERNAMES = {
     "heroprimesohbet",
 }
 
-MANAGEMENT_CHANNEL_USERNAME = "heroprimeduyuru"
 
-# Test kanalı
-TEST_CHANNEL_USERNAME = "@testkanaliii00"
+MANAGEMENT_CHANNEL_USERNAME = (
+    "heroprimeduyuru"
+)
+
 
 # =========================================================
 # DATABASE
@@ -56,69 +81,17 @@ TEST_CHANNEL_USERNAME = "@testkanaliii00"
 DB_FILE = os.getenv(
     "DB_FILE",
     "giveaway.db",
-)
+).strip() or "giveaway.db"
 
-# =========================================================
-# WEBHOOK
-# =========================================================
-
-# Railway Variables içine:
-#
-# WEBHOOK_URL=https://senin-domainin.up.railway.app
-#
-# Eğer WEBHOOK_URL girilmezse Railway'in
-# RAILWAY_PUBLIC_DOMAIN değişkeninden otomatik oluşturulur.
-
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
-
-if not WEBHOOK_URL:
-    railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
-
-    if railway_domain:
-        if railway_domain.startswith("http://"):
-            WEBHOOK_URL = railway_domain.replace(
-                "http://",
-                "https://",
-                1,
-            )
-        elif railway_domain.startswith("https://"):
-            WEBHOOK_URL = railway_domain
-        else:
-            WEBHOOK_URL = f"https://{railway_domain}"
-
-# Webhook URL yolu
-WEBHOOK_PATH = os.getenv(
-    "WEBHOOK_PATH",
-    "heroprime-telegram-webhook",
-).strip().strip("/")
-
-# Telegram webhook secret token
-#
-# Railway Variables içine WEBHOOK_SECRET_TOKEN koyarsan
-# onu kullanır.
-#
-# Girilmezse uygulama her açılışta güvenli rastgele token üretir.
-WEBHOOK_SECRET_TOKEN = os.getenv(
-    "WEBHOOK_SECRET_TOKEN",
-    "",
-).strip()
-
-if not WEBHOOK_SECRET_TOKEN:
-    WEBHOOK_SECRET_TOKEN = secrets.token_urlsafe(32)
-
-# Railway'in verdiği port
-PORT = int(
-    os.getenv(
-        "PORT",
-        "8080",
-    )
-)
 
 # =========================================================
 # ÇEKİLİŞ
 # =========================================================
 
-JOIN_CALLBACK_PREFIX = "giveaway_join:"
+JOIN_CALLBACK_PREFIX = (
+    "giveaway_join:"
+)
+
 
 DEFAULT_GIVEAWAY_TEXT = (
     "🎉 <b>HEROPRIME ÇEKİLİŞ BAŞLADI!</b>\n\n"
@@ -127,19 +100,31 @@ DEFAULT_GIVEAWAY_TEXT = (
     "🍀 <b>Herkese bol şans!</b>"
 )
 
+
 # =========================================================
 # LOGGING
 # =========================================================
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format=(
+        "%(asctime)s - "
+        "%(name)s - "
+        "%(levelname)s - "
+        "%(message)s"
+    ),
     level=logging.INFO,
 )
 
-logger = logging.getLogger(__name__)
 
-# httpx gereksiz request loglarını azalt
-logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger(
+    "heroprime_bot"
+)
+
+
+# Gereksiz HTTP loglarını azalt
+logging.getLogger(
+    "httpx"
+).setLevel(logging.WARNING)
 
 
 # =========================================================
@@ -150,14 +135,19 @@ def get_admin_ids():
     admin_ids = set()
 
     for value in ADMIN_IDS_RAW.split(","):
+
         value = value.strip()
 
         if not value:
             continue
 
         try:
-            admin_ids.add(int(value))
+            admin_ids.add(
+                int(value)
+            )
+
         except ValueError:
+
             logger.warning(
                 "Geçersiz ADMIN_IDS değeri: %s",
                 value,
@@ -169,7 +159,10 @@ def get_admin_ids():
 ADMIN_IDS = get_admin_ids()
 
 
-def is_admin(user_id: int) -> bool:
+def is_admin(
+    user_id: int,
+) -> bool:
+
     return user_id in ADMIN_IDS
 
 
@@ -177,7 +170,10 @@ def is_admin(user_id: int) -> bool:
 # GENEL YARDIMCI FONKSİYONLAR
 # =========================================================
 
-def normalize_username(username: str) -> str:
+def normalize_username(
+    username: str,
+) -> str:
+
     return (
         (username or "")
         .strip()
@@ -186,26 +182,41 @@ def normalize_username(username: str) -> str:
     )
 
 
-def get_chat_username(chat) -> str:
+def get_chat_username(
+    chat,
+) -> str:
+
+    if not chat:
+        return ""
+
     return normalize_username(
-        getattr(chat, "username", "") or ""
+        getattr(
+            chat,
+            "username",
+            "",
+        ) or ""
     )
 
 
 def utc_now() -> str:
+
     return datetime.now(
         timezone.utc
     ).isoformat()
 
 
 def allowed_chat_text() -> str:
+
     return (
         "@heroprimeduyuru veya "
         "@heroprimesohbet"
     )
 
 
-def is_allowed_chat(update: Update) -> bool:
+def is_allowed_chat(
+    update: Update,
+) -> bool:
+
     chat = update.effective_chat
 
     if not chat:
@@ -218,30 +229,42 @@ def is_allowed_chat(update: Update) -> bool:
     ):
         return False
 
-    return get_chat_username(chat) in {
+    username = get_chat_username(
+        chat
+    )
+
+    return username in {
         normalize_username(name)
         for name in ALLOWED_CHAT_USERNAMES
     }
 
 
-def is_management_channel(update: Update) -> bool:
+def is_management_channel(
+    update: Update,
+) -> bool:
+
     chat = update.effective_chat
 
-    return bool(
-        chat
-        and chat.type == "channel"
-        and get_chat_username(chat)
-        == normalize_username(
+    if not chat:
+        return False
+
+    return (
+        chat.type == "channel"
+        and
+        get_chat_username(chat)
+        ==
+        normalize_username(
             MANAGEMENT_CHANNEL_USERNAME
         )
     )
 
 
 # =========================================================
-# DATABASE
+# DATABASE BAĞLANTISI
 # =========================================================
 
 def get_db():
+
     connection = sqlite3.connect(
         DB_FILE,
         timeout=30,
@@ -252,8 +275,14 @@ def get_db():
     return connection
 
 
+# =========================================================
+# DATABASE OLUŞTURMA
+# =========================================================
+
 def init_database():
+
     connection = get_db()
+
     cursor = connection.cursor()
 
     # -----------------------------------------------------
@@ -359,26 +388,35 @@ def init_database():
 
 
 # =========================================================
-# DATABASE HELPERS
+# DATABASE - AKTİF ÇEKİLİŞ
 # =========================================================
 
 def get_active_giveaway():
+
     connection = get_db()
 
-    row = connection.execute(
-        """
-        SELECT *
-        FROM giveaways
-        WHERE active = 1
-        ORDER BY id DESC
-        LIMIT 1
-        """
-    ).fetchone()
+    try:
 
-    connection.close()
+        row = connection.execute(
+            """
+            SELECT *
+            FROM giveaways
+            WHERE active = 1
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
 
-    return row
+        return row
 
+    finally:
+
+        connection.close()
+
+
+# =========================================================
+# DATABASE - KATILIMCI SAYISI
+# =========================================================
 
 def get_participant_count(
     giveaway_id: int,
@@ -386,81 +424,103 @@ def get_participant_count(
 
     connection = get_db()
 
-    row = connection.execute(
-        """
-        SELECT COUNT(*) AS count
-        FROM participants
-        WHERE giveaway_id = ?
-        """,
-        (
-            giveaway_id,
-        ),
-    ).fetchone()
+    try:
 
-    connection.close()
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM participants
+            WHERE giveaway_id = ?
+            """,
+            (
+                giveaway_id,
+            ),
+        ).fetchone()
 
-    return int(
-        row["count"]
-    )
+        return int(
+            row["count"]
+        )
 
+    finally:
+
+        connection.close()
+
+
+# =========================================================
+# DATABASE - ÇEKİLİŞ METNİ
+# =========================================================
 
 def get_giveaway_text() -> str:
 
     connection = get_db()
 
-    row = connection.execute(
-        """
-        SELECT setting_value
-        FROM bot_settings
-        WHERE setting_key = ?
-        """,
-        (
-            "giveaway_text",
-        ),
-    ).fetchone()
+    try:
 
-    connection.close()
+        row = connection.execute(
+            """
+            SELECT setting_value
+            FROM bot_settings
+            WHERE setting_key = ?
+            """,
+            (
+                "giveaway_text",
+            ),
+        ).fetchone()
 
-    if row and row["setting_value"]:
-        return row["setting_value"]
+        if row and row["setting_value"]:
+            return row["setting_value"]
 
-    return DEFAULT_GIVEAWAY_TEXT
+        return DEFAULT_GIVEAWAY_TEXT
 
+    finally:
+
+        connection.close()
+
+
+# =========================================================
+# DATABASE - ÇEKİLİŞ METNİ KAYDET
+# =========================================================
 
 def save_giveaway_text(
     new_text: str,
 ):
+
     connection = get_db()
 
-    connection.execute(
-        """
-        INSERT INTO bot_settings (
-            setting_key,
-            setting_value,
-            updated_at
+    try:
+
+        connection.execute(
+            """
+            INSERT INTO bot_settings (
+                setting_key,
+                setting_value,
+                updated_at
+            )
+            VALUES (?, ?, ?)
+
+            ON CONFLICT(setting_key)
+            DO UPDATE SET
+                setting_value =
+                    excluded.setting_value,
+                updated_at =
+                    excluded.updated_at
+            """,
+            (
+                "giveaway_text",
+                new_text,
+                utc_now(),
+            ),
         )
-        VALUES (?, ?, ?)
 
-        ON CONFLICT(setting_key)
-        DO UPDATE SET
-            setting_value =
-                excluded.setting_value,
-            updated_at =
-                excluded.updated_at
-        """,
-        (
-            "giveaway_text",
-            new_text,
-            utc_now(),
-        ),
-    )
+        connection.commit()
 
-    connection.commit()
-    connection.close()
+    finally:
+
+        connection.close()
 
 
 # =========================================================
-# ÇEKİLİŞ METİNLERİ
+# ÇEKİLİŞ MESAJI
 # =========================================================
 
 def build_giveaway_text(
@@ -477,6 +537,10 @@ def build_giveaway_text(
         f"<b>{participant_count}</b>"
     )
 
+
+# =========================================================
+# ÇEKİLİŞ BİTİŞ MESAJI
+# =========================================================
 
 def build_finished_text(
     custom_text: str,
@@ -498,6 +562,10 @@ def build_finished_text(
     )
 
 
+# =========================================================
+# KATIL BUTONU
+# =========================================================
+
 def build_join_keyboard(
     giveaway_id: int,
 ):
@@ -516,13 +584,21 @@ def build_join_keyboard(
 
 
 # =========================================================
-# ADMIN DM
+# ADMİNE ÖZEL MESAJ
 # =========================================================
 
 async def send_admin_dm(
     context: ContextTypes.DEFAULT_TYPE,
     text: str,
 ):
+
+    if ADMIN_RESULT_CHAT_ID == 0:
+
+        logger.warning(
+            "ADMIN_RESULT_CHAT_ID geçersiz."
+        )
+
+        return False
 
     try:
 
@@ -567,8 +643,10 @@ async def can_manage_giveaway(
     # Grup yöneticisi
     if (
         user
-        and chat
-        and chat.type in (
+        and
+        chat
+        and
+        chat.type in (
             "group",
             "supergroup",
         )
@@ -576,9 +654,11 @@ async def can_manage_giveaway(
 
         try:
 
-            member = await context.bot.get_chat_member(
-                chat_id=chat.id,
-                user_id=user.id,
+            member = (
+                await context.bot.get_chat_member(
+                    chat_id=chat.id,
+                    user_id=user.id,
+                )
             )
 
             return member.status in (
@@ -597,39 +677,15 @@ async def can_manage_giveaway(
 
 
 # =========================================================
-# TEST KANALI ÜYELİK KONTROLÜ
-# =========================================================
-
-async def is_test_channel_member(
-    context: ContextTypes.DEFAULT_TYPE,
-    user_id: int,
-) -> bool:
-
-    try:
-
-        member = await context.bot.get_chat_member(
-            chat_id=TEST_CHANNEL_USERNAME,
-            user_id=user_id,
-        )
-
-        return member.status in (
-            "member",
-            "administrator",
-            "creator",
-        )
-
-    except Exception as error:
-
-        logger.warning(
-            "Test kanalı üyelik kontrolü başarısız: %s",
-            error,
-        )
-
-        return False
-
-
-# =========================================================
 # /START
+# =========================================================
+#
+# ÖNEMLİ:
+# Burada hiçbir kanal linki yok.
+# Zorunlu kanal üyeliği yok.
+# A-TOOLS yok.
+# Reklam yok.
+#
 # =========================================================
 
 async def start_command(
@@ -640,60 +696,44 @@ async def start_command(
     message = update.effective_message
     user = update.effective_user
 
-    if not user or not message:
+    if not message or not user:
         return
 
     # -----------------------------------------------------
-    # ADMIN PRIVATE
+    # ADMIN
     # -----------------------------------------------------
 
     if (
         is_admin(user.id)
-        and message.chat.type == "private"
+        and
+        message.chat.type == "private"
     ):
 
         await message.reply_text(
-            "🤖 <b>HEROPRIME Çekiliş Botu aktif.</b>\n\n"
+            "🤖 <b>HEROPRIME Çekiliş Botu</b>\n\n"
+            "✅ Bot aktif.\n\n"
             "👤 Admin erişimi doğrulandı.\n\n"
-            "Komutlar:\n"
+            "<b>Komutlar:</b>\n\n"
             "/myid\n"
             "/cekilismet\n"
             "/cekilis 3\n"
             "/cekilisdurum\n"
-            "/stopcekilis",
+            "/stopcekilis\n"
+            "/iptal",
             parse_mode="HTML",
         )
 
         return
 
     # -----------------------------------------------------
-    # NORMAL USER
+    # NORMAL KULLANICI
     # -----------------------------------------------------
 
     if message.chat.type == "private":
 
-        is_member = await is_test_channel_member(
-            context,
-            user.id,
-        )
-
-        if not is_member:
-
-            await message.reply_text(
-                "🚀 <b>Botu kullanabilmek için "
-                "test kanalına katılmalısın.</b>\n\n"
-                "📢 Kanal:\n"
-                "https://t.me/testkanaliii00\n\n"
-                "Kanala katıldıktan sonra "
-                "tekrar /start gönder.",
-                parse_mode="HTML",
-            )
-
-            return
-
         await message.reply_text(
-            "✅ <b>Hoş geldin!</b>\n\n"
-            "Bot kullanımına erişimin açık.\n\n"
+            "👋 <b>Hoş geldin!</b>\n\n"
+            "🤖 HEROPRIME Çekiliş Botu aktif.\n\n"
             "🆔 Telegram ID'ni görmek için:\n"
             "/myid",
             parse_mode="HTML",
@@ -712,7 +752,7 @@ async def my_id(
     message = update.effective_message
     user = update.effective_user
 
-    if not user or not message:
+    if not message or not user:
         return
 
     username = (
@@ -744,7 +784,7 @@ async def giveaway_text_command(
     message = update.effective_message
     user = update.effective_user
 
-    if not user or not message:
+    if not message or not user:
         return
 
     if not is_admin(user.id):
@@ -792,12 +832,13 @@ async def save_new_giveaway_text(
     message = update.effective_message
     user = update.effective_user
 
-    if not user or not message:
+    if not message or not user:
         return
 
     if (
         not is_admin(user.id)
-        or message.chat.type != "private"
+        or
+        message.chat.type != "private"
     ):
         return
 
@@ -822,14 +863,13 @@ async def save_new_giveaway_text(
     if len(new_text) > 3500:
 
         await message.reply_text(
-            "❌ Çekiliş metni çok uzun. "
+            "❌ Çekiliş metni çok uzun.\n\n"
             "Lütfen 3500 karakterden kısa "
             "bir metin gönder."
         )
 
         return
 
-    # Güvenli HTML
     safe_text = escape(
         new_text
     )
@@ -864,12 +904,13 @@ async def cancel_text_edit(
     message = update.effective_message
     user = update.effective_user
 
-    if not user or not message:
+    if not message or not user:
         return
 
     if (
         not is_admin(user.id)
-        or message.chat.type != "private"
+        or
+        message.chat.type != "private"
     ):
         return
 
@@ -895,21 +936,27 @@ async def start_giveaway(
     message = update.effective_message
     chat = update.effective_chat
 
-    if not chat or not message:
+    if not message or not chat:
         return
 
-    # Sohbet kontrolü
+    # -----------------------------------------------------
+    # SOHBET KONTROLÜ
+    # -----------------------------------------------------
+
     if not is_allowed_chat(update):
 
         await message.reply_text(
-            f"❌ Bu bot yalnızca "
+            "❌ Bu bot yalnızca "
             f"{allowed_chat_text()} "
-            f"sohbetlerinde çalışır."
+            "sohbetlerinde çalışır."
         )
 
         return
 
-    # Yetki kontrolü
+    # -----------------------------------------------------
+    # YETKİ
+    # -----------------------------------------------------
+
     if not await can_manage_giveaway(
         update,
         context,
@@ -922,11 +969,14 @@ async def start_giveaway(
 
         return
 
-    # Argüman kontrolü
+    # -----------------------------------------------------
+    # ARGÜMAN
+    # -----------------------------------------------------
+
     if len(context.args) != 1:
 
         await message.reply_text(
-            "❌ Kullanım:\n"
+            "❌ Kullanım:\n\n"
             "/cekilis 3\n\n"
             "Buradaki sayı kazanan sayısını "
             "belirler."
@@ -958,7 +1008,18 @@ async def start_giveaway(
 
         return
 
-    # Aktif çekiliş kontrolü
+    if winner_count > 100:
+
+        await message.reply_text(
+            "❌ Kazanan sayısı en fazla 100 olabilir."
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # AKTİF ÇEKİLİŞ
+    # -----------------------------------------------------
+
     active = get_active_giveaway()
 
     if active:
@@ -972,7 +1033,57 @@ async def start_giveaway(
         return
 
     # -----------------------------------------------------
-    # İLK MESAJ
+    # DB'YE ÖNCE KAYIT
+    # -----------------------------------------------------
+
+    started_by = (
+        update.effective_user.id
+        if update.effective_user
+        else 0
+    )
+
+    connection = get_db()
+
+    try:
+
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO giveaways (
+                chat_id,
+                message_id,
+                started_by,
+                winner_count,
+                active,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, 1, ?)
+            """,
+            (
+                chat.id,
+                0,
+                started_by,
+                winner_count,
+                utc_now(),
+            ),
+        )
+
+        giveaway_id = cursor.lastrowid
+
+        connection.commit()
+
+    except Exception:
+
+        connection.rollback()
+        raise
+
+    finally:
+
+        connection.close()
+
+    # -----------------------------------------------------
+    # ÇEKİLİŞ MESAJI
     # -----------------------------------------------------
 
     initial_text = build_giveaway_text(
@@ -988,7 +1099,9 @@ async def start_giveaway(
                 chat_id=chat.id,
                 text=initial_text,
                 parse_mode="HTML",
-                reply_markup=build_join_keyboard(0),
+                reply_markup=build_join_keyboard(
+                    giveaway_id
+                ),
             )
         )
 
@@ -999,81 +1112,61 @@ async def start_giveaway(
             error,
         )
 
+        # Phantom kayıt bırakma
+        connection = get_db()
+
         try:
 
-            await message.reply_text(
-                "❌ Çekiliş mesajı gönderilemedi.\n\n"
-                "Botun bu kanal/grupta mesaj "
-                "gönderme yetkisini kontrol et."
+            connection.execute(
+                """
+                DELETE FROM giveaways
+                WHERE id = ?
+                AND message_id = 0
+                """,
+                (
+                    giveaway_id,
+                ),
             )
 
-        except Exception:
-            pass
+            connection.commit()
+
+        finally:
+
+            connection.close()
+
+        await message.reply_text(
+            "❌ Çekiliş mesajı gönderilemedi.\n\n"
+            "Botun bu sohbet içinde mesaj "
+            "gönderme yetkisini kontrol et."
+        )
 
         return
 
-    started_by = (
-        update.effective_user.id
-        if update.effective_user
-        else next(
-            iter(ADMIN_IDS),
-            ADMIN_RESULT_CHAT_ID,
-        )
-    )
-
     # -----------------------------------------------------
-    # DATABASE KAYDI
+    # GERÇEK MESSAGE ID
     # -----------------------------------------------------
 
     connection = get_db()
-    cursor = connection.cursor()
-
-    cursor.execute(
-        """
-        INSERT INTO giveaways (
-            chat_id,
-            message_id,
-            started_by,
-            winner_count,
-            active,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, 1, ?)
-        """,
-        (
-            chat.id,
-            giveaway_message.message_id,
-            started_by,
-            winner_count,
-            utc_now(),
-        ),
-    )
-
-    giveaway_id = cursor.lastrowid
-
-    connection.commit()
-    connection.close()
-
-    # -----------------------------------------------------
-    # GERÇEK ÇEKİLİŞ ID'SİNİ BUTONA YAZ
-    # -----------------------------------------------------
 
     try:
 
-        await context.bot.edit_message_reply_markup(
-            chat_id=chat.id,
-            message_id=giveaway_message.message_id,
-            reply_markup=build_join_keyboard(
-                giveaway_id
+        connection.execute(
+            """
+            UPDATE giveaways
+            SET message_id = ?
+            WHERE id = ?
+            """,
+            (
+                giveaway_message.message_id,
+                giveaway_id,
             ),
         )
 
-    except Exception as error:
+        connection.commit()
 
-        logger.warning(
-            "KATIL butonu güncellenemedi: %s",
-            error,
-        )
+    finally:
+
+        connection.close()
 
     # -----------------------------------------------------
     # ADMIN BİLDİRİMİ
@@ -1083,16 +1176,12 @@ async def start_giveaway(
         chat
     )
 
-    chat_link = (
-        f"@{chat_username}"
-        if chat_username
-        else str(chat.id)
-    )
-
     chat_title = (
         chat.title
-        or chat_username
-        or str(chat.id)
+        or
+        chat_username
+        or
+        str(chat.id)
     )
 
     await send_admin_dm(
@@ -1100,7 +1189,6 @@ async def start_giveaway(
         "🚀 <b>ÇEKİLİŞ BAŞLADI</b>\n\n"
         f"💬 Sohbet: "
         f"<b>{escape(chat_title)}</b>\n"
-        f"🔗 {escape(chat_link)}\n"
         f"🏆 Kazanan sayısı: "
         f"<b>{winner_count}</b>\n"
         "👥 Katılımcı: <b>0</b>\n\n"
@@ -1109,7 +1197,9 @@ async def start_giveaway(
 
     logger.info(
         "Çekiliş başlatıldı: "
-        "giveaway_id=%s chat_id=%s winner_count=%s",
+        "giveaway_id=%s "
+        "chat_id=%s "
+        "winner_count=%s",
         giveaway_id,
         chat.id,
         winner_count,
@@ -1117,7 +1207,7 @@ async def start_giveaway(
 
 
 # =========================================================
-# 🎟️ KATIL BUTONU
+# 🎟️ KATIL
 # =========================================================
 
 async def join_giveaway_callback(
@@ -1134,14 +1224,12 @@ async def join_giveaway_callback(
     data = query.data or ""
 
     if not user:
-
         await query.answer()
         return
 
     if not data.startswith(
         JOIN_CALLBACK_PREFIX
     ):
-
         await query.answer()
         return
 
@@ -1170,49 +1258,63 @@ async def join_giveaway_callback(
 
     connection = get_db()
 
-    # -----------------------------------------------------
-    # AKTİF ÇEKİLİŞ
-    # -----------------------------------------------------
-
-    giveaway = connection.execute(
-        """
-        SELECT *
-        FROM giveaways
-        WHERE id = ?
-        AND active = 1
-        LIMIT 1
-        """,
-        (
-            giveaway_id,
-        ),
-    ).fetchone()
-
-    if not giveaway:
-
-        connection.close()
-
-        await query.answer(
-            "❌ Bu çekiliş artık aktif değil.",
-            show_alert=True,
-        )
-
-        return
-
-    giveaway_chat_id = giveaway[
-        "chat_id"
-    ]
-
-    # -----------------------------------------------------
-    # SOHBET DOĞRULAMA
-    # -----------------------------------------------------
-
     try:
 
-        target_chat = (
-            await context.bot.get_chat(
-                giveaway_chat_id
+        # -------------------------------------------------
+        # AKTİF ÇEKİLİŞ
+        # -------------------------------------------------
+
+        giveaway = connection.execute(
+            """
+            SELECT *
+            FROM giveaways
+            WHERE id = ?
+            AND active = 1
+            LIMIT 1
+            """,
+            (
+                giveaway_id,
+            ),
+        ).fetchone()
+
+        if not giveaway:
+
+            await query.answer(
+                "❌ Bu çekiliş artık aktif değil.",
+                show_alert=True,
             )
-        )
+
+            return
+
+        # -------------------------------------------------
+        # SOHBET DOĞRULAMA
+        # -------------------------------------------------
+
+        giveaway_chat_id = giveaway[
+            "chat_id"
+        ]
+
+        try:
+
+            target_chat = (
+                await context.bot.get_chat(
+                    giveaway_chat_id
+                )
+            )
+
+        except Exception as error:
+
+            logger.warning(
+                "Çekiliş sohbeti alınamadı: %s",
+                error,
+            )
+
+            await query.answer(
+                "❌ Çekiliş sohbeti doğrulanamadı.",
+                show_alert=True,
+            )
+
+            return
 
         target_username = (
             get_chat_username(
@@ -1225,16 +1327,18 @@ async def join_giveaway_callback(
             "supergroup",
             "channel",
         ):
-            raise ValueError(
-                "Desteklenmeyen sohbet türü"
+
+            await query.answer(
+                "❌ Geçersiz çekiliş sohbeti.",
+                show_alert=True,
             )
+
+            return
 
         if target_username not in {
             normalize_username(name)
             for name in ALLOWED_CHAT_USERNAMES
         }:
-
-            connection.close()
 
             await query.answer(
                 "❌ Bu çekiliş bu sohbette "
@@ -1244,113 +1348,96 @@ async def join_giveaway_callback(
 
             return
 
-    except Exception as error:
+        # -------------------------------------------------
+        # DAHA ÖNCE KATILDI MI?
+        # -------------------------------------------------
 
-        connection.close()
-
-        logger.warning(
-            "Çekiliş sohbeti doğrulanamadı: %s",
-            error,
-        )
-
-        await query.answer(
-            "❌ Çekiliş sohbeti doğrulanamadı.",
-            show_alert=True,
-        )
-
-        return
-
-    # -----------------------------------------------------
-    # DAHA ÖNCE KATILMIŞ MI?
-    # -----------------------------------------------------
-
-    existing = connection.execute(
-        """
-        SELECT id
-        FROM participants
-        WHERE giveaway_id = ?
-        AND telegram_user_id = ?
-        LIMIT 1
-        """,
-        (
-            giveaway_id,
-            user.id,
-        ),
-    ).fetchone()
-
-    if existing:
-
-        connection.close()
-
-        await query.answer(
-            "⚠️ Bu çekilişe zaten katıldın!",
-            show_alert=True,
-        )
-
-        return
-
-    # -----------------------------------------------------
-    # KULLANICI BİLGİLERİ
-    # -----------------------------------------------------
-
-    telegram_username = (
-        user.username
-        if user.username
-        else None
-    )
-
-    telegram_name = (
-        user.full_name
-        or "İsimsiz kullanıcı"
-    )
-
-    entered_username = (
-        telegram_username
-        or telegram_name
-    )
-
-    # -----------------------------------------------------
-    # KATILIMI KAYDET
-    # -----------------------------------------------------
-
-    try:
-
-        connection.execute(
+        existing = connection.execute(
             """
-            INSERT INTO participants (
-                giveaway_id,
-                telegram_user_id,
-                telegram_username,
-                telegram_name,
-                entered_username,
-                joined_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
+            SELECT id
+            FROM participants
+            WHERE giveaway_id = ?
+            AND telegram_user_id = ?
+            LIMIT 1
             """,
             (
                 giveaway_id,
                 user.id,
-                telegram_username,
-                telegram_name,
-                entered_username,
-                utc_now(),
             ),
+        ).fetchone()
+
+        if existing:
+
+            await query.answer(
+                "⚠️ Bu çekilişe zaten katıldın!",
+                show_alert=True,
+            )
+
+            return
+
+        # -------------------------------------------------
+        # KULLANICI
+        # -------------------------------------------------
+
+        telegram_username = (
+            user.username
+            if user.username
+            else None
         )
 
-        connection.commit()
+        telegram_name = (
+            user.full_name
+            or "İsimsiz kullanıcı"
+        )
 
-    except sqlite3.IntegrityError:
+        entered_username = (
+            telegram_username
+            or
+            telegram_name
+        )
+
+        # -------------------------------------------------
+        # KATILIM
+        # -------------------------------------------------
+
+        try:
+
+            connection.execute(
+                """
+                INSERT INTO participants (
+                    giveaway_id,
+                    telegram_user_id,
+                    telegram_username,
+                    telegram_name,
+                    entered_username,
+                    joined_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    giveaway_id,
+                    user.id,
+                    telegram_username,
+                    telegram_name,
+                    entered_username,
+                    utc_now(),
+                ),
+            )
+
+            connection.commit()
+
+        except sqlite3.IntegrityError:
+
+            await query.answer(
+                "⚠️ Bu çekilişe zaten katıldın!",
+                show_alert=True,
+            )
+
+            return
+
+    finally:
 
         connection.close()
-
-        await query.answer(
-            "⚠️ Bu çekilişe zaten katıldın!",
-            show_alert=True,
-        )
-
-        return
-
-    connection.close()
 
     # -----------------------------------------------------
     # KATILIMCI SAYISI
@@ -1363,7 +1450,7 @@ async def join_giveaway_callback(
     )
 
     # -----------------------------------------------------
-    # ÇEKİLİŞ MESAJINI GÜNCELLE
+    # MESAJI GÜNCELLE
     # -----------------------------------------------------
 
     new_text = build_giveaway_text(
@@ -1375,7 +1462,7 @@ async def join_giveaway_callback(
     try:
 
         await context.bot.edit_message_text(
-            chat_id=giveaway_chat_id,
+            chat_id=giveaway["chat_id"],
             message_id=giveaway["message_id"],
             text=new_text,
             parse_mode="HTML",
@@ -1387,17 +1474,12 @@ async def join_giveaway_callback(
     except Exception as error:
 
         logger.warning(
-            "Katılım sonrası çekiliş mesajı "
-            "güncellenemedi: %s",
+            "Katılım sonrası mesaj güncellenemedi: %s",
             error,
         )
 
     # -----------------------------------------------------
-    # ÖNEMLİ:
-    # GRUBA MESAJ GÖNDERMEYİZ.
-    #
-    # Sadece butona basan kullanıcıya
-    # Telegram callback bildirimi gösterilir.
+    # SADECE BUTONA BASAN KİŞİYE POPUP
     # -----------------------------------------------------
 
     await query.answer(
@@ -1405,8 +1487,10 @@ async def join_giveaway_callback(
     )
 
     logger.info(
-        "Yeni katılım: giveaway_id=%s "
-        "user_id=%s username=%s",
+        "Yeni katılım: "
+        "giveaway_id=%s "
+        "user_id=%s "
+        "username=%s",
         giveaway_id,
         user.id,
         user.username,
@@ -1425,18 +1509,26 @@ async def stop_giveaway(
     message = update.effective_message
     chat = update.effective_chat
 
-    if not chat or not message:
+    if not message or not chat:
         return
+
+    # -----------------------------------------------------
+    # SOHBET
+    # -----------------------------------------------------
 
     if not is_allowed_chat(update):
 
         await message.reply_text(
-            f"❌ Bu bot yalnızca "
+            "❌ Bu bot yalnızca "
             f"{allowed_chat_text()} "
-            f"sohbetlerinde çalışır."
+            "sohbetlerinde çalışır."
         )
 
         return
+
+    # -----------------------------------------------------
+    # YETKİ
+    # -----------------------------------------------------
 
     if not await can_manage_giveaway(
         update,
@@ -1449,6 +1541,10 @@ async def stop_giveaway(
         )
 
         return
+
+    # -----------------------------------------------------
+    # AKTİF ÇEKİLİŞ
+    # -----------------------------------------------------
 
     active = get_active_giveaway()
 
@@ -1468,44 +1564,53 @@ async def stop_giveaway(
 
         return
 
+    # -----------------------------------------------------
+    # KATILIMCILAR
+    # -----------------------------------------------------
+
     connection = get_db()
 
-    participants = connection.execute(
-        """
-        SELECT *
-        FROM participants
-        WHERE giveaway_id = ?
-        ORDER BY id ASC
-        """,
-        (
-            active["id"],
-        ),
-    ).fetchall()
+    try:
 
-    # Çekilişi pasif yap
-    connection.execute(
-        """
-        UPDATE giveaways
-        SET active = 0,
-            ended_at = ?
-        WHERE id = ?
-        """,
-        (
-            utc_now(),
-            active["id"],
-        ),
-    )
+        participants = connection.execute(
+            """
+            SELECT *
+            FROM participants
+            WHERE giveaway_id = ?
+            ORDER BY id ASC
+            """,
+            (
+                active["id"],
+            ),
+        ).fetchall()
 
-    connection.commit()
-    connection.close()
+        participant_list = list(
+            participants
+        )
 
-    participant_list = list(
-        participants
-    )
+        participant_count = len(
+            participant_list
+        )
 
-    participant_count = len(
-        participant_list
-    )
+        # Önce pasifleştir
+        connection.execute(
+            """
+            UPDATE giveaways
+            SET active = 0,
+                ended_at = ?
+            WHERE id = ?
+            """,
+            (
+                utc_now(),
+                active["id"],
+            ),
+        )
+
+        connection.commit()
+
+    finally:
+
+        connection.close()
 
     # =====================================================
     # KATILIMCI YOK
@@ -1548,17 +1653,12 @@ async def stop_giveaway(
             "❌ Kazanan bulunamadı.",
         )
 
-        try:
-
-            await message.reply_text(
-                "🛑 <b>Çekiliş sonlandırıldı.</b>\n\n"
-                "👥 Katılımcı: <b>0</b>\n"
-                "❌ Kazanan yok.",
-                parse_mode="HTML",
-            )
-
-        except Exception:
-            pass
+        await message.reply_text(
+            "🛑 <b>Çekiliş sonlandırıldı.</b>\n\n"
+            "👥 Katılımcı: <b>0</b>\n"
+            "❌ Kazanan yok.",
+            parse_mode="HTML",
+        )
 
         return
 
@@ -1571,9 +1671,11 @@ async def stop_giveaway(
         participant_count,
     )
 
-    winners = secrets.SystemRandom().sample(
-        participant_list,
-        winner_count,
+    winners = (
+        secrets.SystemRandom().sample(
+            participant_list,
+            winner_count,
+        )
     )
 
     group_lines = []
@@ -1661,28 +1763,22 @@ async def stop_giveaway(
         f"{winners_text_admin}",
     )
 
-    try:
-
-        await message.reply_text(
-            "🏁 <b>Çekiliş sonlandırıldı!</b>\n\n"
-            f"👥 Toplam katılımcı: "
-            f"<b>{participant_count}</b>\n"
-            f"🏆 Kazanan: "
-            f"<b>{winner_count}</b>\n\n"
-            "🎉 Kazananları tebrik ederiz!",
-            parse_mode="HTML",
-        )
-
-    except Exception as error:
-
-        logger.warning(
-            "Grup sonuç özeti gönderilemedi: %s",
-            error,
-        )
+    # Bu mesaj komutun kullanıldığı gruba gönderilir.
+    await message.reply_text(
+        "🏁 <b>Çekiliş sonlandırıldı!</b>\n\n"
+        f"👥 Toplam katılımcı: "
+        f"<b>{participant_count}</b>\n"
+        f"🏆 Kazanan: "
+        f"<b>{winner_count}</b>\n\n"
+        "🎉 Kazananları tebrik ederiz!",
+        parse_mode="HTML",
+    )
 
     logger.info(
         "Çekiliş tamamlandı: "
-        "giveaway_id=%s participants=%s winners=%s",
+        "giveaway_id=%s "
+        "participants=%s "
+        "winners=%s",
         active["id"],
         participant_count,
         winner_count,
@@ -1701,15 +1797,15 @@ async def giveaway_status(
     message = update.effective_message
     chat = update.effective_chat
 
-    if not chat or not message:
+    if not message or not chat:
         return
 
     if not is_allowed_chat(update):
 
         await message.reply_text(
-            f"❌ Bu bot yalnızca "
+            "❌ Bu bot yalnızca "
             f"{allowed_chat_text()} "
-            f"sohbetlerinde çalışır."
+            "sohbetlerinde çalışır."
         )
 
         return
@@ -1760,6 +1856,41 @@ async def error_handler(
 
     error = context.error
 
+    # -----------------------------------------------------
+    # 409 CONFLICT
+    # -----------------------------------------------------
+
+    if isinstance(error, Conflict):
+
+        logger.error(
+            "================================================"
+        )
+
+        logger.error(
+            "TELEGRAM 409 CONFLICT"
+        )
+
+        logger.error(
+            "Bu bot tokenını kullanan başka bir "
+            "getUpdates/polling bağlantısı var."
+        )
+
+        logger.error(
+            "Railway'de tek instance çalıştığından ve "
+            "aynı tokenın başka yerde kullanılmadığından "
+            "emin ol."
+        )
+
+        logger.error(
+            "================================================"
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # DİĞER HATALAR
+    # -----------------------------------------------------
+
     logger.error(
         "Telegram bot hatası: %s",
         error,
@@ -1768,24 +1899,53 @@ async def error_handler(
 
 
 # =========================================================
-# WEBHOOK BİLGİLERİ
+# WEBHOOK TEMİZLEME
+# =========================================================
+#
+# Polling'e başlamadan önce botun Telegram tarafında
+# eski webhook'u varsa temizler.
+#
+# Bu, DOMAIN GEREKTİRMEZ.
+#
 # =========================================================
 
-def get_webhook_url() -> str:
+async def clear_old_webhook(
+    application: Application,
+):
 
-    if not WEBHOOK_URL:
-        raise RuntimeError(
-            "WEBHOOK_URL bulunamadı.\n\n"
-            "Railway Variables içine:\n"
-            "WEBHOOK_URL=https://senin-railway-domainin\n"
-            "ekle."
+    try:
+
+        webhook_info = (
+            await application.bot.get_webhook_info()
         )
 
-    return (
-        WEBHOOK_URL.rstrip("/")
-        + "/"
-        + WEBHOOK_PATH
-    )
+        if webhook_info.url:
+
+            logger.info(
+                "Eski Telegram webhook'u bulundu. "
+                "Temizleniyor..."
+            )
+
+            await application.bot.delete_webhook(
+                drop_pending_updates=True
+            )
+
+            logger.info(
+                "Eski webhook temizlendi."
+            )
+
+        else:
+
+            logger.info(
+                "Aktif Telegram webhook'u bulunamadı."
+            )
+
+    except Exception as error:
+
+        logger.warning(
+            "Eski webhook kontrolü/temizliği başarısız: %s",
+            error,
+        )
 
 
 # =========================================================
@@ -1802,8 +1962,9 @@ def main():
 
         raise RuntimeError(
             "BOT_TOKEN bulunamadı.\n\n"
-            "Railway > Variables bölümüne "
-            "BOT_TOKEN ekle."
+            "Railway > Variables bölümüne:\n\n"
+            "BOT_TOKEN=YENI_BOT_TOKEN\n\n"
+            "ekle."
         )
 
     # -----------------------------------------------------
@@ -1815,12 +1976,6 @@ def main():
         raise RuntimeError(
             "ADMIN_IDS bulunamadı."
         )
-
-    # -----------------------------------------------------
-    # WEBHOOK URL
-    # -----------------------------------------------------
-
-    webhook_url = get_webhook_url()
 
     # -----------------------------------------------------
     # DATABASE
@@ -1835,11 +1990,12 @@ def main():
     application = (
         Application.builder()
         .token(BOT_TOKEN)
+        .post_init(clear_old_webhook)
         .build()
     )
 
     # =====================================================
-    # COMMANDS
+    # COMMAND HANDLERS
     # =====================================================
 
     application.add_handler(
@@ -1892,7 +2048,7 @@ def main():
     )
 
     # =====================================================
-    # KATIL CALLBACK
+    # KATIL BUTONU
     # =====================================================
 
     application.add_handler(
@@ -1936,25 +2092,19 @@ def main():
     )
 
     logger.info(
-        "Telegram çalışma modu: WEBHOOK"
+        "Mod: POLLING"
     )
 
     logger.info(
-        "Webhook URL: %s",
-        webhook_url,
+        "Webhook: KAPALI"
     )
 
     logger.info(
-        "Webhook portu: %s",
-        PORT,
+        "Domain: KULLANILMIYOR"
     )
 
     logger.info(
-        "Polling KULLANILMIYOR."
-    )
-
-    logger.info(
-        "getUpdates KULLANILMIYOR."
+        "Kanal reklamı/zorunlu kanal: YOK"
     )
 
     logger.info(
@@ -1968,35 +2118,23 @@ def main():
     )
 
     logger.info(
-        "Admin sonuç hesabı: %s",
-        ADMIN_RESULT_USERNAME,
-    )
-
-    logger.info(
         "=========================================="
     )
 
     # =====================================================
-    # WEBHOOK
+    # POLLING
     # =====================================================
     #
-    # BURADA run_polling YOK.
+    # Telegram -> getUpdates -> Railway
     #
-    # getUpdates YOK.
-    #
-    # Telegram -> HTTPS Webhook -> Railway
+    # Domain gerekmez.
     #
     # =====================================================
 
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=WEBHOOK_PATH,
-        webhook_url=webhook_url,
+    application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
-        secret_token=WEBHOOK_SECRET_TOKEN,
-        max_connections=40,
+        bootstrap_retries=5,
     )
 
 
