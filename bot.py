@@ -30,7 +30,7 @@ from telegram.ext import (
 # BOT_TOKEN = BotFather'dan aldığın YENİ token
 #
 # Tokenı kodun içine yazmıyoruz.
-BOT_TOKEN = '8855111211:AAE5iUsRRxqVmUSPVGpd5nu-Ruc2XPH7w6o'
+BOT_TOKEN = '8855111211:AAFM2NaMfV1e01Nv8xo_d_F0QFzULMM53Zg'
 
 # HeroPrimeMarketing Telegram ID
 ADMIN_IDS_RAW = os.getenv(
