@@ -31,7 +31,7 @@ from telegram.ext import (
 #
 # Tokenı kodun içine yazmıyoruz.
 
-BOT_TOKEN = '8855111211:AAFM2NaMfV1e01Nv8xo_d_F0QFzULMM53Zg'
+BOT_TOKEN = '8855111211:AAGLZm4m2GPuXz49mHDkEeTrJgegXEOMHIU'
 
 # ------------------------------------------------------------
 # SINGLE INSTANCE LOCK
