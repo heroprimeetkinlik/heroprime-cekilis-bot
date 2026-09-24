@@ -1,6 +1,5 @@
 import os
 import sqlite3
-import secrets
 import logging
 import json
 import re
@@ -9,7 +8,6 @@ from html import escape
 from urllib.parse import urlparse
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import Conflict
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -23,46 +21,30 @@ from telegram.ext import (
 # AYARLAR
 # =========================================================
 
-# Railway > Variables > BOT_TOKEN
-BOT_TOKEN = '8862557397:AAEUVFKfquhWiX6oCGJKXDZBZblZz5J6fVk'
+BOT_TOKEN = '8862557397:AAFy7B3L7wfdvaPMGAYdDCAcA-FBmwQVh1s'
 
 ADMIN_IDS_RAW = os.getenv("ADMIN_IDS", "8845737995").strip()
-ADMIN_RESULT_CHAT_ID_RAW = os.getenv(
-    "ADMIN_RESULT_CHAT_ID",
-    "8845737995",
-).strip()
 
-try:
-    ADMIN_RESULT_CHAT_ID = int(ADMIN_RESULT_CHAT_ID_RAW)
-except ValueError:
-    ADMIN_RESULT_CHAT_ID = 0
-
-# @HeroPrimeMarketing korunuyor.
-ADMIN_RESULT_USERNAME = "@HeroPrimeMarketing"
+DB_FILE = os.getenv("DB_FILE", "sites.db").strip() or "sites.db"
 
 ALLOWED_CHAT_USERNAMES = {
     "heroprimeduyuru",
     "heroprimesohbet",
 }
-MANAGEMENT_CHANNEL_USERNAME = "heroprimeduyuru"
 
-DB_FILE = os.getenv("DB_FILE", "giveaway.db").strip() or "giveaway.db"
+SITE_ADMIN_PREFIX = "siteadmin:"
 
-JOIN_CALLBACK_PREFIX = "giveaway_join:"
-EVENT_CALLBACK_PREFIX = "event:"
-
-DEFAULT_GIVEAWAY_TEXT = (
-    "🎉 <b>HEROPRIME ÇEKİLİŞ BAŞLADI!</b>\n\n"
-    "🎟️ Çekilişe katılmak için aşağıdaki <b>KATIL</b> "
-    "butonuna bas.\n\n"
-    "🍀 <b>Herkese bol şans!</b>"
-)
+SITE_MAX_NAME = 80
+SITE_MAX_URL = 1000
+SITE_MAX_TEXT = 3500
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
-logger = logging.getLogger("heroprime_bot")
+
+logger = logging.getLogger("heroprime_site_bot")
+
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
@@ -72,11 +54,15 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 def get_admin_ids():
     result = set()
+
     for value in ADMIN_IDS_RAW.split(","):
         value = value.strip()
+
         if value.isdigit():
             result.add(int(value))
+
     return result
+
 
 ADMIN_IDS = get_admin_ids()
 
@@ -89,6 +75,10 @@ def is_admin(user_id: int) -> bool:
 # GENEL
 # =========================================================
 
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def normalize_username(value: str) -> str:
     return (value or "").strip().lstrip("@").lower()
 
@@ -96,112 +86,58 @@ def normalize_username(value: str) -> str:
 def get_chat_username(chat) -> str:
     if not chat:
         return ""
-    return normalize_username(getattr(chat, "username", "") or "")
+
+    return normalize_username(
+        getattr(chat, "username", "") or ""
+    )
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def is_allowed_chat(update: Update) -> bool:
+    chat = update.effective_chat
+
+    if not chat:
+        return False
+
+    if chat.type not in ("group", "supergroup", "channel"):
+        return False
+
+    username = get_chat_username(chat)
+
+    return username in {
+        normalize_username(x)
+        for x in ALLOWED_CHAT_USERNAMES
+    }
 
 
 def allowed_chat_text() -> str:
     return "@heroprimeduyuru veya @heroprimesohbet"
 
 
-def is_allowed_chat(update: Update) -> bool:
-    chat = update.effective_chat
-    if not chat or chat.type not in ("group", "supergroup", "channel"):
-        return False
-    return get_chat_username(chat) in {
-        normalize_username(x) for x in ALLOWED_CHAT_USERNAMES
-    }
-
-
-def is_management_channel(update: Update) -> bool:
-    chat = update.effective_chat
-    return bool(
-        chat
-        and chat.type == "channel"
-        and get_chat_username(chat)
-        == normalize_username(MANAGEMENT_CHANNEL_USERNAME)
-    )
-
-
-def get_db():
-    connection = sqlite3.connect(DB_FILE, timeout=30)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
 # =========================================================
 # DATABASE
 # =========================================================
+
+def get_db():
+    connection = sqlite3.connect(
+        DB_FILE,
+        timeout=30,
+    )
+
+    connection.row_factory = sqlite3.Row
+
+    return connection
+
 
 def init_database():
     connection = get_db()
     cursor = connection.cursor()
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS giveaways (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER NOT NULL,
-            message_id INTEGER NOT NULL,
-            started_by INTEGER NOT NULL,
-            winner_count INTEGER NOT NULL,
-            active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL,
-            ended_at TEXT
-        )
-    """)
+    # -----------------------------------------------------
+    # SİTELER
+    # -----------------------------------------------------
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS participants (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            giveaway_id INTEGER NOT NULL,
-            telegram_user_id INTEGER NOT NULL,
-            telegram_username TEXT,
-            telegram_name TEXT NOT NULL,
-            entered_username TEXT NOT NULL,
-            joined_at TEXT NOT NULL,
-            UNIQUE(giveaway_id, telegram_user_id),
-            FOREIGN KEY(giveaway_id) REFERENCES giveaways(id)
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS bot_settings (
-            setting_key TEXT PRIMARY KEY,
-            setting_value TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            post_chat_id INTEGER NOT NULL,
-            post_message_id INTEGER NOT NULL,
-            post_link TEXT NOT NULL,
-            created_by INTEGER NOT NULL,
-            created_at TEXT NOT NULL,
-            active INTEGER NOT NULL DEFAULT 1
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS event_entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL,
-            telegram_user_id INTEGER,
-            telegram_username TEXT,
-            entered_text TEXT NOT NULL,
-            reply_message_id INTEGER NOT NULL,
-            created_at TEXT NOT NULL,
-            UNIQUE(event_id, reply_message_id),
-            FOREIGN KEY(event_id) REFERENCES events(id)
-        )
-    """)
-
-    cursor.execute("""
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS sites (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -210,9 +146,15 @@ def init_database():
             sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         )
-    """)
+        """
+    )
 
-    cursor.execute("""
+    # -----------------------------------------------------
+    # TANITIMLAR
+    # -----------------------------------------------------
+
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS promotions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             command TEXT NOT NULL UNIQUE,
@@ -222,1305 +164,1787 @@ def init_database():
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
-    """)
-
-    row = cursor.execute(
-        "SELECT setting_value FROM bot_settings WHERE setting_key = ?",
-        ("giveaway_text",),
-    ).fetchone()
-
-    if row is None:
-        cursor.execute(
-            """
-            INSERT INTO bot_settings(setting_key, setting_value, updated_at)
-            VALUES (?, ?, ?)
-            """,
-            ("giveaway_text", DEFAULT_GIVEAWAY_TEXT, utc_now()),
-        )
+        """
+    )
 
     connection.commit()
     connection.close()
-    logger.info("Database hazır.")
 
-
-def get_active_giveaway():
-    connection = get_db()
-    try:
-        return connection.execute(
-            """
-            SELECT * FROM giveaways
-            WHERE active = 1
-            ORDER BY id DESC LIMIT 1
-            """
-        ).fetchone()
-    finally:
-        connection.close()
-
-
-def get_participant_count(giveaway_id: int) -> int:
-    connection = get_db()
-    try:
-        row = connection.execute(
-            "SELECT COUNT(*) AS count FROM participants WHERE giveaway_id = ?",
-            (giveaway_id,),
-        ).fetchone()
-        return int(row["count"])
-    finally:
-        connection.close()
-
-
-def get_giveaway_text() -> str:
-    connection = get_db()
-    try:
-        row = connection.execute(
-            "SELECT setting_value FROM bot_settings WHERE setting_key = ?",
-            ("giveaway_text",),
-        ).fetchone()
-        return row["setting_value"] if row else DEFAULT_GIVEAWAY_TEXT
-    finally:
-        connection.close()
-
-
-def save_giveaway_text(new_text: str):
-    connection = get_db()
-    try:
-        connection.execute(
-            """
-            INSERT INTO bot_settings(setting_key, setting_value, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(setting_key) DO UPDATE SET
-                setting_value=excluded.setting_value,
-                updated_at=excluded.updated_at
-            """,
-            ("giveaway_text", new_text, utc_now()),
-        )
-        connection.commit()
-    finally:
-        connection.close()
+    logger.info("Site veritabanı hazır.")
 
 
 # =========================================================
-# SİTE / TANITIM SİSTEMİ
+# SITE FONKSİYONLARI
 # =========================================================
-
-SITE_ADMIN_PREFIX = "siteadmin:"
-SITE_MAX_NAME = 80
-SITE_MAX_URL = 1000
-SITE_MAX_TEXT = 3500
-
 
 def normalize_site_command(value: str) -> str:
     value = (value or "").strip().lower()
+
     value = value.lstrip("!./")
-    value = re.sub(r"[^a-z0-9_]+", "", value)
+
+    value = re.sub(
+        r"[^a-z0-9_]+",
+        "",
+        value,
+    )
+
     return value[:40]
 
 
 def valid_http_url(value: str) -> bool:
     try:
-        parsed = urlparse((value or "").strip())
-        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+        parsed = urlparse(
+            (value or "").strip()
+        )
+
+        return (
+            parsed.scheme in ("http", "https")
+            and bool(parsed.netloc)
+        )
+
     except Exception:
         return False
 
 
 def get_sites(visible_only=True):
     connection = get_db()
+
     try:
         sql = "SELECT * FROM sites"
         params = ()
+
         if visible_only:
             sql += " WHERE visible = 1"
+
         sql += " ORDER BY sort_order ASC, id ASC"
-        return connection.execute(sql, params).fetchall()
+
+        return connection.execute(
+            sql,
+            params,
+        ).fetchall()
+
     finally:
         connection.close()
 
 
 def get_site(site_id):
     connection = get_db()
+
     try:
-        return connection.execute("SELECT * FROM sites WHERE id = ?", (site_id,)).fetchone()
+        return connection.execute(
+            "SELECT * FROM sites WHERE id = ?",
+            (site_id,),
+        ).fetchone()
+
     finally:
         connection.close()
 
 
-def add_site(name, url, visible=1):
+def add_site(
+    name,
+    url,
+    visible=1,
+):
     connection = get_db()
+
     try:
-        row = connection.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM sites").fetchone()
+        row = connection.execute(
+            """
+            SELECT COALESCE(MAX(sort_order), 0) + 1 AS n
+            FROM sites
+            """
+        ).fetchone()
+
         order_no = int(row["n"])
-        cur = connection.execute(
-            "INSERT INTO sites(name, url, visible, sort_order, created_at) VALUES (?, ?, ?, ?, ?)",
-            (name, url, int(visible), order_no, utc_now()),
+
+        cursor = connection.execute(
+            """
+            INSERT INTO sites(
+                name,
+                url,
+                visible,
+                sort_order,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                name,
+                url,
+                int(visible),
+                order_no,
+                utc_now(),
+            ),
         )
+
         connection.commit()
-        return cur.lastrowid
+
+        return cursor.lastrowid
+
     finally:
         connection.close()
 
 
-def update_site(site_id, name=None, url=None, visible=None):
-    fields, values = [], []
+def update_site(
+    site_id,
+    name=None,
+    url=None,
+    visible=None,
+):
+    fields = []
+    values = []
+
     if name is not None:
-        fields.append("name = ?"); values.append(name)
+        fields.append("name = ?")
+        values.append(name)
+
     if url is not None:
-        fields.append("url = ?"); values.append(url)
+        fields.append("url = ?")
+        values.append(url)
+
     if visible is not None:
-        fields.append("visible = ?"); values.append(int(visible))
+        fields.append("visible = ?")
+        values.append(int(visible))
+
     if not fields:
         return
+
     values.append(site_id)
+
     connection = get_db()
+
     try:
-        connection.execute(f"UPDATE sites SET {', '.join(fields)} WHERE id = ?", values)
+        connection.execute(
+            f"""
+            UPDATE sites
+            SET {", ".join(fields)}
+            WHERE id = ?
+            """,
+            values,
+        )
+
         connection.commit()
+
     finally:
         connection.close()
 
 
 def delete_site(site_id):
     connection = get_db()
+
     try:
-        connection.execute("DELETE FROM sites WHERE id = ?", (site_id,))
+        connection.execute(
+            "DELETE FROM sites WHERE id = ?",
+            (site_id,),
+        )
+
         connection.commit()
+
     finally:
         connection.close()
 
 
 def reorder_sites(site_ids):
     connection = get_db()
+
     try:
-        for order_no, site_id in enumerate(site_ids, 1):
-            connection.execute("UPDATE sites SET sort_order = ? WHERE id = ?", (order_no, site_id))
+        for order_no, site_id in enumerate(
+            site_ids,
+            1,
+        ):
+            connection.execute(
+                """
+                UPDATE sites
+                SET sort_order = ?
+                WHERE id = ?
+                """,
+                (
+                    order_no,
+                    site_id,
+                ),
+            )
+
         connection.commit()
+
     finally:
         connection.close()
 
 
+# =========================================================
+# TANITIM FONKSİYONLARI
+# =========================================================
+
 def get_promotion_by_command(command):
     command = normalize_site_command(command)
+
     connection = get_db()
+
     try:
-        return connection.execute("SELECT * FROM promotions WHERE command = ?", (command,)).fetchone()
+        return connection.execute(
+            """
+            SELECT *
+            FROM promotions
+            WHERE command = ?
+            """,
+            (command,),
+        ).fetchone()
+
     finally:
         connection.close()
 
 
 def get_promotion(promo_id):
     connection = get_db()
+
     try:
-        return connection.execute("SELECT * FROM promotions WHERE id = ?", (promo_id,)).fetchone()
+        return connection.execute(
+            """
+            SELECT *
+            FROM promotions
+            WHERE id = ?
+            """,
+            (promo_id,),
+        ).fetchone()
+
     finally:
         connection.close()
 
 
 def get_promotions():
     connection = get_db()
+
     try:
-        return connection.execute("SELECT * FROM promotions ORDER BY id DESC").fetchall()
+        return connection.execute(
+            """
+            SELECT *
+            FROM promotions
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
     finally:
         connection.close()
 
 
-def save_promotion(command, text, image_file_id=None, buttons=None, promo_id=None):
+def save_promotion(
+    command,
+    text,
+    image_file_id=None,
+    buttons=None,
+    promo_id=None,
+):
     command = normalize_site_command(command)
-    buttons_json = json.dumps(buttons or [], ensure_ascii=False)
+
+    buttons_json = json.dumps(
+        buttons or [],
+        ensure_ascii=False,
+    )
+
     connection = get_db()
+
     try:
         if promo_id:
             connection.execute(
-                "UPDATE promotions SET command = ?, image_file_id = ?, text = ?, buttons_json = ?, updated_at = ? WHERE id = ?",
-                (command, image_file_id, text, buttons_json, utc_now(), promo_id),
+                """
+                UPDATE promotions
+                SET
+                    command = ?,
+                    image_file_id = ?,
+                    text = ?,
+                    buttons_json = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    command,
+                    image_file_id,
+                    text,
+                    buttons_json,
+                    utc_now(),
+                    promo_id,
+                ),
             )
+
         else:
+            now = utc_now()
+
             connection.execute(
-                "INSERT INTO promotions(command, image_file_id, text, buttons_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (command, image_file_id, text, buttons_json, utc_now(), utc_now()),
+                """
+                INSERT INTO promotions(
+                    command,
+                    image_file_id,
+                    text,
+                    buttons_json,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    command,
+                    image_file_id,
+                    text,
+                    buttons_json,
+                    now,
+                    now,
+                ),
             )
+
         connection.commit()
+
     finally:
         connection.close()
 
 
 def delete_promotion(promo_id):
     connection = get_db()
+
     try:
-        connection.execute("DELETE FROM promotions WHERE id = ?", (promo_id,))
+        connection.execute(
+            "DELETE FROM promotions WHERE id = ?",
+            (promo_id,),
+        )
+
         connection.commit()
+
     finally:
         connection.close()
 
 
+# =========================================================
+# BUTONLAR
+# =========================================================
+
 def promotion_buttons_markup(buttons):
     rows = []
+
     for button in buttons:
-        text = str(button.get("text", "Link"))[:64]
-        url = str(button.get("url", ""))
+        text = str(
+            button.get(
+                "text",
+                "Link",
+            )
+        )[:64]
+
+        url = str(
+            button.get(
+                "url",
+                "",
+            )
+        )
+
         if valid_http_url(url):
-            rows.append([InlineKeyboardButton(text, url=url)])
-    return InlineKeyboardMarkup(rows) if rows else None
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text,
+                        url=url,
+                    )
+                ]
+            )
+
+    if not rows:
+        return None
+
+    return InlineKeyboardMarkup(rows)
 
 
 def site_menu_markup(sites):
     rows = []
-    for site in sites:
-        rows.append([InlineKeyboardButton(f"🌐 {site['name']}", url=site["url"])])
-    return InlineKeyboardMarkup(rows) if rows else None
 
+    for site in sites:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"🌐 {site['name']}",
+                    url=site["url"],
+                )
+            ]
+        )
+
+    if not rows:
+        return None
+
+    return InlineKeyboardMarkup(rows)
+
+
+# =========================================================
+# SITE ADMİN MENÜSÜ
+# =========================================================
 
 def site_admin_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Site Ekle", callback_data=SITE_ADMIN_PREFIX + "add")],
-        [InlineKeyboardButton("✏️ Site Düzenle", callback_data=SITE_ADMIN_PREFIX + "edit")],
-        [InlineKeyboardButton("🗑️ Site Sil", callback_data=SITE_ADMIN_PREFIX + "delete")],
-        [InlineKeyboardButton("↕️ Buton Sırası", callback_data=SITE_ADMIN_PREFIX + "order")],
-        [InlineKeyboardButton("📋 Siteleri Listele", callback_data=SITE_ADMIN_PREFIX + "list")],
-        [InlineKeyboardButton("➕ Tanıtım Ekle", callback_data=SITE_ADMIN_PREFIX + "promo_add")],
-        [InlineKeyboardButton("✏️ Tanıtım Düzenle", callback_data=SITE_ADMIN_PREFIX + "promo_edit")],
-        [InlineKeyboardButton("🗑️ Tanıtım Sil", callback_data=SITE_ADMIN_PREFIX + "promo_delete")],
-        [InlineKeyboardButton("📋 Tanıtımları Listele", callback_data=SITE_ADMIN_PREFIX + "promo_list")],
-    ])
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "➕ Site Ekle",
+                    callback_data=SITE_ADMIN_PREFIX + "add",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✏️ Site Düzenle",
+                    callback_data=SITE_ADMIN_PREFIX + "edit",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🗑️ Site Sil",
+                    callback_data=SITE_ADMIN_PREFIX + "delete",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "↕️ Site Sırası",
+                    callback_data=SITE_ADMIN_PREFIX + "order",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📋 Siteleri Listele",
+                    callback_data=SITE_ADMIN_PREFIX + "list",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "➕ Tanıtım Ekle",
+                    callback_data=SITE_ADMIN_PREFIX + "promo_add",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✏️ Tanıtım Düzenle",
+                    callback_data=SITE_ADMIN_PREFIX + "promo_edit",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🗑️ Tanıtım Sil",
+                    callback_data=SITE_ADMIN_PREFIX + "promo_delete",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📋 Tanıtımları Listele",
+                    callback_data=SITE_ADMIN_PREFIX + "promo_list",
+                )
+            ],
+        ]
+    )
 
 
 def site_admin_text():
     return (
-        "⚙️ <b>SİTE YÖNETİMİ</b>\n\n"
-        "🌐 <b>/site</b> menüsü ile tanıtım komutları birbirinden bağımsızdır.\n"
-        "Bir siteyi buradan eklemeden /site içinde görünmez.\n\n"
-        "📢 <b>TANITIM YÖNETİMİ</b>\n"
-        "Tanıtımlar <code>!raconbet</code>, <code>.raconbet</code> veya "
-        "<code>/raconbet</code> olarak çalışır."
+        "⚙️ <b>HEROPRIME SİTE YÖNETİMİ</b>\n\n"
+        "🌐 Buradan siteleri yönetebilirsin.\n"
+        "📢 Tanıtım komutlarını oluşturabilirsin.\n\n"
+        "<b>SİTE SİSTEMİ</b>\n"
+        "• Site ekleme\n"
+        "• Site düzenleme\n"
+        "• Site silme\n"
+        "• Site sıralama\n"
+        "• Görünürlük kontrolü\n\n"
+        "<b>TANITIM SİSTEMİ</b>\n"
+        "Tanıtımlar örneğin:\n"
+        "<code>!raconbet</code>\n"
+        "<code>.raconbet</code>\n"
+        "<code>/raconbet</code>\n"
+        "şeklinde kullanılabilir."
     )
 
 
-async def site_alias_command(update, context):
-    return await site_command(update, context)
+# =========================================================
+# /SITE
+# =========================================================
 
-
-async def site_command(update, context):
+async def site_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     message = update.effective_message
+
     if not message:
         return
+
     sites = get_sites(True)
+
     if not sites:
-        await message.reply_text("🌐 <b>SİTELER</b>\n\nHenüz site eklenmemiş.", parse_mode="HTML")
+        await message.reply_text(
+            "🌐 <b>SİTELER</b>\n\n"
+            "Henüz site eklenmemiş.",
+            parse_mode="HTML",
+        )
         return
+
     await message.reply_text(
-        "🌐 <b>SİTELER</b>\n\nBir site seç:",
+        "🌐 <b>HEROPRIME SİTELER</b>\n\n"
+        "Bir site seç:",
         parse_mode="HTML",
         reply_markup=site_menu_markup(sites),
     )
 
 
-async def site_admin_command(update, context):
-    message = update.effective_message
-    user = update.effective_user
-    if not message or not user or not is_admin(user.id) or message.chat.type != "private":
-        return
-    context.user_data.clear()
-    await message.reply_text(site_admin_text(), parse_mode="HTML", reply_markup=site_admin_keyboard())
-
-
-async def site_admin_callback(update, context):
-    query = update.callback_query
-    user = query.from_user if query else None
-    if not query or not user or not is_admin(user.id):
-        if query: await query.answer("❌ Yetkin yok.", show_alert=True)
-        return
-    data = query.data or ""
-    action = data.replace(SITE_ADMIN_PREFIX, "", 1)
-    await query.answer()
-
-    if action == "panel":
-        await query.message.reply_text(site_admin_text(), parse_mode="HTML", reply_markup=site_admin_keyboard()); return
-    if action == "add":
-        context.user_data.clear(); context.user_data["site_flow"] = {"step":"name"}
-        await query.message.reply_text("➕ <b>Site Ekle</b>\n\nSite adını gönder.\nÖrnek: <b>JASINO</b>\n\n/iptal ile iptal.", parse_mode="HTML"); return
-    if action == "list":
-        sites=get_sites(False)
-        if not sites: await query.message.reply_text("📋 Site listesi boş."); return
-        lines=[f"{i}. <b>{escape(x['name'])}</b> — {'🟢' if x['visible'] else '⚪'} /site\n   {escape(x['url'])}" for i,x in enumerate(sites,1)]
-        await query.message.reply_text("📋 <b>SİTELER</b>\n\n"+"\n".join(lines),parse_mode="HTML"); return
-    if action in ("edit","delete"):
-        sites=get_sites(False)
-        if not sites: await query.message.reply_text("Henüz site yok."); return
-        rows=[[InlineKeyboardButton(f"{x['name']}", callback_data=f"{SITE_ADMIN_PREFIX}{action}_id:{x['id']}")] for x in sites]
-        rows.append([InlineKeyboardButton("⬅️ Geri", callback_data=SITE_ADMIN_PREFIX+"panel")])
-        await query.message.reply_text("Site seç:", reply_markup=InlineKeyboardMarkup(rows)); return
-    if action.startswith("delete_id:"):
-        sid=int(action.split(":",1)[1]); delete_site(sid); await query.message.reply_text("✅ Site silindi."); return
-    if action.startswith("edit_id:"):
-        sid=int(action.split(":",1)[1]); context.user_data.clear(); context.user_data["site_flow"]={"step":"edit_name","id":sid}
-        site=get_site(sid); await query.message.reply_text(f"✏️ Yeni site adını gönder.\nMevcut: <b>{escape(site['name'])}</b>",parse_mode="HTML"); return
-    if action == "order":
-        sites=get_sites(False)
-        if len(sites)<2: await query.message.reply_text("↕️ Sıralama için en az 2 site gerekli."); return
-        context.user_data.clear(); context.user_data["site_flow"]={"step":"order"}
-        await query.message.reply_text("↕️ Site sırasını ID'leri virgülle gönder.\nÖrnek: <code>3,1,2</code>",parse_mode="HTML"); return
-    if action == "promo_add":
-        context.user_data.clear(); context.user_data["promo_flow"]={"step":"command","buttons":[]}
-        await query.message.reply_text("➕ <b>Tanıtım Ekle</b>\n\nKomut adını gönder. Örnek: <code>!raconbet</code>\n(! . / fark etmez)",parse_mode="HTML"); return
-    if action in ("promo_edit","promo_delete"):
-        promos=get_promotions()
-        if not promos: await query.message.reply_text("Henüz tanıtım yok."); return
-        rows=[[InlineKeyboardButton("!"+x['command'], callback_data=f"{SITE_ADMIN_PREFIX}{action}_id:{x['id']}")] for x in promos]
-        await query.message.reply_text("Tanıtım seç:",reply_markup=InlineKeyboardMarkup(rows)); return
-    if action.startswith("promo_delete_id:"):
-        delete_promotion(int(action.split(":",1)[1])); await query.message.reply_text("✅ Tanıtım silindi."); return
-    if action.startswith("promo_edit_id:"):
-        promo=get_promotion(int(action.split(":",1)[1]))
-        context.user_data.clear(); context.user_data["promo_flow"]={"step":"edit_text","id":promo['id'],"command":promo['command'],"buttons":json.loads(promo['buttons_json'] or '[]'),"image":promo['image_file_id']}
-        await query.message.reply_text(f"✏️ Tanıtım metnini gönder.\nMevcut:\n{escape(promo['text'])}",parse_mode="HTML"); return
-    if action == "promo_list":
-        promos=get_promotions()
-        if not promos: await query.message.reply_text("📋 Tanıtım listesi boş."); return
-        lines=[f"{i}. <code>!{x['command']}</code> — {'🖼️' if x['image_file_id'] else '📝'}" for i,x in enumerate(promos,1)]
-        await query.message.reply_text("📋 <b>TANITIMLAR</b>\n\n"+"\n".join(lines),parse_mode="HTML"); return
-
-
-async def site_admin_flow_message(update, context):
-    message=update.effective_message; user=update.effective_user
-    if not message or not user or not is_admin(user.id) or message.chat.type!="private": return False
-    flow=context.user_data.get("site_flow")
-    if not flow: return False
-    text=(message.text or "").strip()
-    if text=="/iptal": context.user_data.clear(); await message.reply_text("❌ İşlem iptal edildi."); return True
-    step=flow.get("step")
-    if step=="name":
-        if not text or len(text)>SITE_MAX_NAME: await message.reply_text("❌ Geçerli bir site adı gönder."); return True
-        flow["name"]=text; flow["step"]="url"; await message.reply_text("🔗 Site linkini gönder.\nÖrnek: https://site.com"); return True
-    if step=="url":
-        if not valid_http_url(text): await message.reply_text("❌ Geçerli bir http/https linki gönder."); return True
-        flow["url"]=text; flow["step"]="visible"; await message.reply_text("/site menüsünde görünsün mü?",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Evet",callback_data=SITE_ADMIN_PREFIX+"vis:1"),InlineKeyboardButton("❌ Hayır",callback_data=SITE_ADMIN_PREFIX+"vis:0")]])); return True
-    if step=="edit_name":
-        if not text or len(text)>SITE_MAX_NAME: await message.reply_text("❌ Geçerli bir ad gönder."); return True
-        flow["name"]=text; flow["step"]="edit_url"; await message.reply_text("🔗 Yeni site linkini gönder."); return True
-    if step=="edit_url":
-        if not valid_http_url(text): await message.reply_text("❌ Geçerli bir link gönder."); return True
-        flow["url"]=text; flow["step"]="edit_visible"; await message.reply_text("/site görünürlüğü?",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🟢 Açık",callback_data=SITE_ADMIN_PREFIX+"editvis:1"),InlineKeyboardButton("⚪ Kapalı",callback_data=SITE_ADMIN_PREFIX+"editvis:0")]])); return True
-    if step=="order":
-        try: ids=[int(x.strip()) for x in text.split(",") if x.strip()]
-        except ValueError: await message.reply_text("❌ ID formatı hatalı."); return True
-        sites=get_sites(False); valid={x['id'] for x in sites}
-        if set(ids)!=valid or len(ids)!=len(valid): await message.reply_text("❌ Tüm site ID'lerini birer kez sırala."); return True
-        reorder_sites(ids); context.user_data.clear(); await message.reply_text("✅ Site sırası güncellendi."); return True
-    return False
-
-
-async def site_admin_photo(update, context):
-    message=update.effective_message; user=update.effective_user
-    if not message or not user or not is_admin(user.id) or message.chat.type!="private": return False
-    flow=context.user_data.get("promo_flow")
-    if not flow or flow.get("step")!="image": return False
-    flow["image"]=message.photo[-1].file_id
-    flow["step"]="text"
-    await message.reply_text("📝 Tanıtım metnini gönder. HTML gerekmez, bot güvenli biçimde işler.")
-    return True
-
-
-async def site_admin_promo_flow(update, context):
-    message=update.effective_message; user=update.effective_user
-    if not message or not user or not is_admin(user.id) or message.chat.type!="private": return False
-    flow=context.user_data.get("promo_flow")
-    if not flow: return False
-    text=(message.text or "").strip()
-    if text=="/iptal": context.user_data.clear(); await message.reply_text("❌ İşlem iptal edildi."); return True
-    step=flow.get("step")
-    if step=="command":
-        cmd=normalize_site_command(text)
-        if not cmd: await message.reply_text("❌ Geçerli bir komut gönder. Örnek: !raconbet"); return True
-        old=get_promotion_by_command(cmd)
-        if old and old['id']!=flow.get('id'): await message.reply_text("❌ Bu tanıtım komutu zaten kullanılıyor."); return True
-        flow["command"]=cmd; flow["step"]="image"; await message.reply_text("🖼️ Görsel eklemek ister misin?",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🖼️ Görsel Ekle",callback_data=SITE_ADMIN_PREFIX+"p_skip:0"),InlineKeyboardButton("⏭️ Görseli Geç",callback_data=SITE_ADMIN_PREFIX+"p_skip:1")]])); return True
-    if step in ("text","edit_text"):
-        if not text or len(text)>SITE_MAX_TEXT: await message.reply_text("❌ Metin boş olamaz ve 3500 karakteri geçemez."); return True
-        flow["text"]=escape(text); flow["step"]="buttons"; await message.reply_text("🔘 Buton ekleyebilirsin.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Buton Ekle",callback_data=SITE_ADMIN_PREFIX+"btn_add"),InlineKeyboardButton("💾 Kaydet",callback_data=SITE_ADMIN_PREFIX+"promo_save")]])); return True
-    if step=="button_text":
-        if not text or len(text)>64: await message.reply_text("❌ Buton metni 64 karakteri geçmesin."); return True
-        flow["button_text"]=text; flow["step"]="button_url"; await message.reply_text("🔗 Bu butonun URL'sini gönder."); return True
-    if step=="button_url":
-        if not valid_http_url(text): await message.reply_text("❌ Geçerli bir URL gönder."); return True
-        flow["buttons"].append({"text":flow.pop("button_text"),"url":text}); flow["step"]="buttons"
-        await message.reply_text("✅ Buton eklendi. Başka buton ekle veya kaydet.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Buton Ekle",callback_data=SITE_ADMIN_PREFIX+"btn_add"),InlineKeyboardButton("💾 Kaydet",callback_data=SITE_ADMIN_PREFIX+"promo_save")]])); return True
-    return False
-
-
-async def site_admin_callback_extended(update, context):
-    query=update.callback_query
-    if not query or not is_admin(query.from_user.id):
-        if query: await query.answer("❌ Yetkin yok.",show_alert=True)
-        return
-    data=query.data or ""
-    if data==SITE_ADMIN_PREFIX+"vis:1" or data==SITE_ADMIN_PREFIX+"vis:0":
-        flow=context.user_data.get("site_flow")
-        if not flow: await query.answer("❌ Süre doldu.",show_alert=True); return
-        add_site(flow["name"],flow["url"],1 if data.endswith(":1") else 0); context.user_data.clear(); await query.answer("Kaydedildi")
-        await query.message.reply_text("✅ Site başarıyla eklendi."); return
-    if data.startswith(SITE_ADMIN_PREFIX+"editvis:"):
-        flow=context.user_data.get("site_flow")
-        if not flow: await query.answer("❌ Süre doldu.",show_alert=True); return
-        update_site(flow["id"],flow["name"],flow["url"],1 if data.endswith(":1") else 0); context.user_data.clear(); await query.answer("Güncellendi"); await query.message.reply_text("✅ Site güncellendi."); return
-    if data==SITE_ADMIN_PREFIX+"p_skip:0":
-        flow=context.user_data.get("promo_flow")
-        if not flow: await query.answer("❌ Süre doldu.",show_alert=True); return
-        flow["step"]="image"; await query.answer(); await query.message.reply_text("🖼️ Şimdi görseli gönder."); return
-    if data==SITE_ADMIN_PREFIX+"p_skip:1":
-        flow=context.user_data.get("promo_flow")
-        if not flow: await query.answer("❌ Süre doldu.",show_alert=True); return
-        flow["image"]=flow.get("image"); flow["step"]="text"; await query.answer(); await query.message.reply_text("📝 Tanıtım metnini gönder."); return
-    if data==SITE_ADMIN_PREFIX+"btn_add":
-        flow=context.user_data.get("promo_flow")
-        if not flow: await query.answer("❌ Süre doldu.",show_alert=True); return
-        flow["step"]="button_text"; await query.answer(); await query.message.reply_text("🔘 Buton yazısını gönder."); return
-    if data==SITE_ADMIN_PREFIX+"promo_save":
-        flow=context.user_data.get("promo_flow")
-        if not flow or not flow.get("command") or not flow.get("text"):
-            await query.answer("❌ Eksik bilgi.",show_alert=True); return
-        try:
-            save_promotion(flow["command"],flow["text"],flow.get("image"),flow.get("buttons",[]),flow.get("id"))
-        except sqlite3.IntegrityError:
-            await query.answer("❌ Bu komut zaten var.",show_alert=True); return
-        context.user_data.clear(); await query.answer("Kaydedildi"); await query.message.reply_text("✅ Tanıtım kaydedildi."); return
-    await query.answer()
-
-
-async def run_promotion_command(update, context):
-    message=update.effective_message
-    if not message or not message.text: return
-    m=re.match(r"^\s*([!./])([A-Za-z0-9_]+)(?:\s|$)",message.text)
-    if not m: return
-    command=normalize_site_command(m.group(2))
-    if command in {"site","start","cekilis","cekilismet","stopcekilis","cekilisdurum","iptal","myid","etkinlik"}: return
-    promo=get_promotion_by_command(command)
-    if not promo: return
-    markup=promotion_buttons_markup(json.loads(promo["buttons_json"] or "[]"))
-    text=promo["text"]
-    if promo["image_file_id"]:
-        await message.reply_photo(photo=promo["image_file_id"],caption=text,parse_mode="HTML",reply_markup=markup)
-    else:
-        await message.reply_text(text,parse_mode="HTML",reply_markup=markup)
-
-
-# =========================================================
-# ÇEKİLİŞ
-# =========================================================
-
-def build_giveaway_text(custom_text, winner_count, participant_count):
-    return (
-        f"{custom_text}\n\n"
-        f"🏆 Kazanan sayısı: <b>{winner_count}</b>\n"
-        f"👥 Katılımcı: <b>{participant_count}</b>"
-    )
-
-
-def build_finished_text(custom_text, participant_count, winner_count, winners_text):
-    return (
-        "🏁 <b>HEROPRIME ÇEKİLİŞ SONA ERDİ!</b>\n\n"
-        f"{custom_text}\n\n"
-        f"👥 Toplam katılımcı: <b>{participant_count}</b>\n"
-        f"🏆 Kazanan sayısı: <b>{winner_count}</b>\n\n"
-        "<b>🎉 KAZANANLAR</b>\n\n"
-        f"{winners_text}\n\n"
-        "🍀 <b>Tüm katılımcılara teşekkürler!</b>"
-    )
-
-
-def build_join_keyboard(giveaway_id):
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(
-            "🎟️ KATIL",
-            callback_data=f"{JOIN_CALLBACK_PREFIX}{giveaway_id}",
-        )
-    ]])
-
-
-async def send_admin_dm(context, text):
-    if not ADMIN_RESULT_CHAT_ID:
-        return False
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_RESULT_CHAT_ID,
-            text=text,
-            parse_mode="HTML",
-        )
-        return True
-    except Exception as error:
-        logger.warning("Admin özel mesajı gönderilemedi: %s", error)
-        return False
-
-
-async def can_manage_giveaway(update, context):
-    user = update.effective_user
-    chat = update.effective_chat
-
-    if user and is_admin(user.id):
-        return True
-
-    if is_management_channel(update):
-        return True
-
-    if user and chat and chat.type in ("group", "supergroup"):
-        try:
-            member = await context.bot.get_chat_member(chat.id, user.id)
-            return member.status in ("administrator", "creator")
-        except Exception:
-            return False
-
-    return False
-
-
-async def start_giveaway(update, context):
-    message = update.effective_message
-    chat = update.effective_chat
-    if not message or not chat:
-        return
-
-    if not is_allowed_chat(update):
-        await message.reply_text(
-            f"❌ Bu bot yalnızca {allowed_chat_text()} sohbetlerinde çalışır."
-        )
-        return
-
-    if not await can_manage_giveaway(update, context):
-        await message.reply_text("❌ Bu komutu yalnızca çekiliş yöneticisi kullanabilir.")
-        return
-
-    if len(context.args) != 1:
-        await message.reply_text("❌ Kullanım:\n/cekilis 3")
-        return
-
-    try:
-        winner_count = int(context.args[0])
-    except ValueError:
-        await message.reply_text("❌ Kazanan sayısı sayı olmalı.\nÖrnek: /cekilis 3")
-        return
-
-    if winner_count < 1 or winner_count > 100:
-        await message.reply_text("❌ Kazanan sayısı 1 ile 100 arasında olmalı.")
-        return
-
-    active = get_active_giveaway()
-    if active:
-        await message.reply_text(
-            "⚠️ Zaten aktif bir çekiliş var.\nÖnce /stopcekilis ile bitir."
-        )
-        return
-
-    started_by = update.effective_user.id if update.effective_user else 0
-
-    connection = get_db()
-    try:
-        cursor = connection.execute(
-            """
-            INSERT INTO giveaways(
-                chat_id, message_id, started_by, winner_count, active, created_at
-            )
-            VALUES (?, ?, ?, ?, 1, ?)
-            """,
-            (chat.id, 0, started_by, winner_count, utc_now()),
-        )
-        giveaway_id = cursor.lastrowid
-        connection.commit()
-    finally:
-        connection.close()
-
-    try:
-        giveaway_message = await context.bot.send_message(
-            chat_id=chat.id,
-            text=build_giveaway_text(get_giveaway_text(), winner_count, 0),
-            parse_mode="HTML",
-            reply_markup=build_join_keyboard(giveaway_id),
-        )
-    except Exception:
-        connection = get_db()
-        try:
-            connection.execute(
-                "DELETE FROM giveaways WHERE id = ? AND message_id = 0",
-                (giveaway_id,),
-            )
-            connection.commit()
-        finally:
-            connection.close()
-        await message.reply_text("❌ Çekiliş mesajı gönderilemedi.")
-        return
-
-    connection = get_db()
-    try:
-        connection.execute(
-            "UPDATE giveaways SET message_id = ? WHERE id = ?",
-            (giveaway_message.message_id, giveaway_id),
-        )
-        connection.commit()
-    finally:
-        connection.close()
-
-    title = chat.title or get_chat_username(chat) or str(chat.id)
-    await send_admin_dm(
+async def site_alias_command(
+    update,
+    context,
+):
+    await site_command(
+        update,
         context,
-        "🚀 <b>ÇEKİLİŞ BAŞLADI</b>\n\n"
-        f"💬 Sohbet: <b>{escape(title)}</b>\n"
-        f"🏆 Kazanan sayısı: <b>{winner_count}</b>\n"
-        "👥 Katılımcı: <b>0</b>\n\n"
-        "🟢 Katılımlar alınmaya başladı.",
     )
 
 
-async def join_giveaway_callback(update, context):
+# =========================================================
+# /SITEYONETIM
+# =========================================================
+
+async def site_admin_command(
+    update,
+    context,
+):
+    message = update.effective_message
+    user = update.effective_user
+
+    if (
+        not message
+        or not user
+        or not is_admin(user.id)
+        or message.chat.type != "private"
+    ):
+        return
+
+    context.user_data.clear()
+
+    await message.reply_text(
+        site_admin_text(),
+        parse_mode="HTML",
+        reply_markup=site_admin_keyboard(),
+    )
+
+
+# =========================================================
+# SITE ADMİN CALLBACK
+# =========================================================
+
+async def site_admin_callback(
+    update,
+    context,
+):
     query = update.callback_query
+
     if not query:
         return
 
+    user = query.from_user
+
+    if not user or not is_admin(user.id):
+        await query.answer(
+            "❌ Yetkin yok.",
+            show_alert=True,
+        )
+        return
+
     data = query.data or ""
-    if not data.startswith(JOIN_CALLBACK_PREFIX):
+
+    action = data.replace(
+        SITE_ADMIN_PREFIX,
+        "",
+        1,
+    )
+
+    await query.answer()
+
+    # -----------------------------------------------------
+    # PANEL
+    # -----------------------------------------------------
+
+    if action == "panel":
+        await query.message.reply_text(
+            site_admin_text(),
+            parse_mode="HTML",
+            reply_markup=site_admin_keyboard(),
+        )
+        return
+
+    # -----------------------------------------------------
+    # SITE EKLE
+    # -----------------------------------------------------
+
+    if action == "add":
+        context.user_data.clear()
+
+        context.user_data["site_flow"] = {
+            "step": "name"
+        }
+
+        await query.message.reply_text(
+            "➕ <b>Site Ekle</b>\n\n"
+            "Site adını gönder.\n\n"
+            "Örnek:\n"
+            "<code>RACONBET</code>\n\n"
+            "/iptal ile iptal edebilirsin.",
+            parse_mode="HTML",
+        )
+        return
+
+    # -----------------------------------------------------
+    # SITE LİSTELE
+    # -----------------------------------------------------
+
+    if action == "list":
+        sites = get_sites(False)
+
+        if not sites:
+            await query.message.reply_text(
+                "📋 Site listesi boş."
+            )
+            return
+
+        lines = []
+
+        for i, site in enumerate(
+            sites,
+            1,
+        ):
+            status = (
+                "🟢"
+                if site["visible"]
+                else "⚪"
+            )
+
+            lines.append(
+                f"{i}. <b>{escape(site['name'])}</b> "
+                f"{status}\n"
+                f"   ID: <code>{site['id']}</code>\n"
+                f"   {escape(site['url'])}"
+            )
+
+        await query.message.reply_text(
+            "📋 <b>SİTELER</b>\n\n"
+            + "\n\n".join(lines),
+            parse_mode="HTML",
+        )
+        return
+
+    # -----------------------------------------------------
+    # SITE DÜZENLE / SİL
+    # -----------------------------------------------------
+
+    if action in (
+        "edit",
+        "delete",
+    ):
+        sites = get_sites(False)
+
+        if not sites:
+            await query.message.reply_text(
+                "Henüz site yok."
+            )
+            return
+
+        rows = []
+
+        for site in sites:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        site["name"],
+                        callback_data=(
+                            f"{SITE_ADMIN_PREFIX}"
+                            f"{action}_id:"
+                            f"{site['id']}"
+                        ),
+                    )
+                ]
+            )
+
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "⬅️ Geri",
+                    callback_data=(
+                        SITE_ADMIN_PREFIX
+                        + "panel"
+                    ),
+                )
+            ]
+        )
+
+        await query.message.reply_text(
+            "Site seç:",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+        return
+
+    # -----------------------------------------------------
+    # SITE SİL
+    # -----------------------------------------------------
+
+    if action.startswith("delete_id:"):
+        try:
+            site_id = int(
+                action.split(
+                    ":",
+                    1,
+                )[1]
+            )
+        except ValueError:
+            await query.message.reply_text(
+                "❌ Geçersiz site."
+            )
+            return
+
+        delete_site(site_id)
+
+        await query.message.reply_text(
+            "✅ Site silindi."
+        )
+        return
+
+    # -----------------------------------------------------
+    # SITE DÜZENLE
+    # -----------------------------------------------------
+
+    if action.startswith("edit_id:"):
+        try:
+            site_id = int(
+                action.split(
+                    ":",
+                    1,
+                )[1]
+            )
+        except ValueError:
+            await query.message.reply_text(
+                "❌ Geçersiz site."
+            )
+            return
+
+        site = get_site(site_id)
+
+        if not site:
+            await query.message.reply_text(
+                "❌ Site bulunamadı."
+            )
+            return
+
+        context.user_data.clear()
+
+        context.user_data["site_flow"] = {
+            "step": "edit_name",
+            "id": site_id,
+        }
+
+        await query.message.reply_text(
+            "✏️ <b>Site Düzenle</b>\n\n"
+            f"Mevcut ad: "
+            f"<b>{escape(site['name'])}</b>\n\n"
+            "Yeni site adını gönder.",
+            parse_mode="HTML",
+        )
+        return
+
+    # -----------------------------------------------------
+    # SITE SIRALAMA
+    # -----------------------------------------------------
+
+    if action == "order":
+        sites = get_sites(False)
+
+        if len(sites) < 2:
+            await query.message.reply_text(
+                "↕️ Sıralama için en az 2 site gerekli."
+            )
+            return
+
+        context.user_data.clear()
+
+        context.user_data["site_flow"] = {
+            "step": "order"
+        }
+
+        ids = ", ".join(
+            str(site["id"])
+            for site in sites
+        )
+
+        await query.message.reply_text(
+            "↕️ <b>SİTE SIRASI</b>\n\n"
+            f"Mevcut ID sırası:\n"
+            f"<code>{ids}</code>\n\n"
+            "Yeni sırayı virgülle gönder.\n\n"
+            "Örnek:\n"
+            "<code>3,1,2</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    # -----------------------------------------------------
+    # TANITIM EKLE
+    # -----------------------------------------------------
+
+    if action == "promo_add":
+        context.user_data.clear()
+
+        context.user_data["promo_flow"] = {
+            "step": "command",
+            "buttons": [],
+        }
+
+        await query.message.reply_text(
+            "➕ <b>Tanıtım Ekle</b>\n\n"
+            "Komut adını gönder.\n\n"
+            "Örnek:\n"
+            "<code>!raconbet</code>\n\n"
+            "! . / fark etmez.",
+            parse_mode="HTML",
+        )
+        return
+
+    # -----------------------------------------------------
+    # TANITIM DÜZENLE / SİL
+    # -----------------------------------------------------
+
+    if action in (
+        "promo_edit",
+        "promo_delete",
+    ):
+        promos = get_promotions()
+
+        if not promos:
+            await query.message.reply_text(
+                "Henüz tanıtım yok."
+            )
+            return
+
+        rows = []
+
+        for promo in promos:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        "!"
+                        + promo["command"],
+                        callback_data=(
+                            f"{SITE_ADMIN_PREFIX}"
+                            f"{action}_id:"
+                            f"{promo['id']}"
+                        ),
+                    )
+                ]
+            )
+
+        await query.message.reply_text(
+            "Tanıtım seç:",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+        return
+
+    # -----------------------------------------------------
+    # TANITIM SİL
+    # -----------------------------------------------------
+
+    if action.startswith("promo_delete_id:"):
+        try:
+            promo_id = int(
+                action.split(
+                    ":",
+                    1,
+                )[1]
+            )
+        except ValueError:
+            await query.message.reply_text(
+                "❌ Geçersiz tanıtım."
+            )
+            return
+
+        delete_promotion(promo_id)
+
+        await query.message.reply_text(
+            "✅ Tanıtım silindi."
+        )
+        return
+
+    # -----------------------------------------------------
+    # TANITIM DÜZENLE
+    # -----------------------------------------------------
+
+    if action.startswith("promo_edit_id:"):
+        try:
+            promo_id = int(
+                action.split(
+                    ":",
+                    1,
+                )[1]
+            )
+        except ValueError:
+            await query.message.reply_text(
+                "❌ Geçersiz tanıtım."
+            )
+            return
+
+        promo = get_promotion(promo_id)
+
+        if not promo:
+            await query.message.reply_text(
+                "❌ Tanıtım bulunamadı."
+            )
+            return
+
+        context.user_data.clear()
+
+        context.user_data["promo_flow"] = {
+            "step": "edit_text",
+            "id": promo["id"],
+            "command": promo["command"],
+            "buttons": json.loads(
+                promo["buttons_json"]
+                or "[]"
+            ),
+            "image": promo["image_file_id"],
+        }
+
+        await query.message.reply_text(
+            "✏️ <b>Tanıtım Düzenle</b>\n\n"
+            f"Komut: <code>!{promo['command']}</code>\n\n"
+            "Yeni tanıtım metnini gönder.\n\n"
+            "Mevcut metin:\n"
+            f"{escape(promo['text'])}",
+            parse_mode="HTML",
+        )
+        return
+
+    # -----------------------------------------------------
+    # TANITIM LİSTELE
+    # -----------------------------------------------------
+
+    if action == "promo_list":
+        promos = get_promotions()
+
+        if not promos:
+            await query.message.reply_text(
+                "📋 Tanıtım listesi boş."
+            )
+            return
+
+        lines = []
+
+        for i, promo in enumerate(
+            promos,
+            1,
+        ):
+            media = (
+                "🖼️ Görselli"
+                if promo["image_file_id"]
+                else "📝 Metin"
+            )
+
+            lines.append(
+                f"{i}. <code>!{promo['command']}</code> "
+                f"— {media}"
+            )
+
+        await query.message.reply_text(
+            "📋 <b>TANITIMLAR</b>\n\n"
+            + "\n".join(lines),
+            parse_mode="HTML",
+        )
+        return
+
+
+# =========================================================
+# SITE ADMIN CALLBACK - EK AKIŞLAR
+# =========================================================
+
+async def site_admin_callback_extended(
+    update,
+    context,
+):
+    query = update.callback_query
+
+    if not query:
         return
 
     user = query.from_user
-    try:
-        giveaway_id = int(data.replace(JOIN_CALLBACK_PREFIX, "", 1))
-    except ValueError:
-        await query.answer("❌ Geçersiz çekiliş.", show_alert=True)
-        return
 
-    connection = get_db()
-    try:
-        giveaway = connection.execute(
-            """
-            SELECT * FROM giveaways
-            WHERE id = ? AND active = 1 LIMIT 1
-            """,
-            (giveaway_id,),
-        ).fetchone()
-
-        if not giveaway:
-            await query.answer("❌ Bu çekiliş artık aktif değil.", show_alert=True)
-            return
-
-        existing = connection.execute(
-            """
-            SELECT id FROM participants
-            WHERE giveaway_id = ? AND telegram_user_id = ? LIMIT 1
-            """,
-            (giveaway_id, user.id),
-        ).fetchone()
-
-        if existing:
-            await query.answer("⚠️ Bu çekilişe zaten katıldın!", show_alert=True)
-            return
-
-        username = user.username
-        name = user.full_name or "İsimsiz kullanıcı"
-        entered = username or name
-
-        connection.execute(
-            """
-            INSERT INTO participants(
-                giveaway_id, telegram_user_id, telegram_username,
-                telegram_name, entered_username, joined_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (giveaway_id, user.id, username, name, entered, utc_now()),
+    if not user or not is_admin(user.id):
+        await query.answer(
+            "❌ Yetkin yok.",
+            show_alert=True,
         )
-        connection.commit()
-    except sqlite3.IntegrityError:
-        await query.answer("⚠️ Bu çekilişe zaten katıldın!", show_alert=True)
-        return
-    finally:
-        connection.close()
-
-    count = get_participant_count(giveaway_id)
-
-    try:
-        await context.bot.edit_message_text(
-            chat_id=giveaway["chat_id"],
-            message_id=giveaway["message_id"],
-            text=build_giveaway_text(
-                get_giveaway_text(),
-                giveaway["winner_count"],
-                count,
-            ),
-            parse_mode="HTML",
-            reply_markup=build_join_keyboard(giveaway_id),
-        )
-    except Exception:
-        pass
-
-    await query.answer("🎟️ Çekilişe başarıyla katıldın!")
-
-
-async def stop_giveaway(update, context):
-    message = update.effective_message
-    chat = update.effective_chat
-    if not message or not chat:
-        return
-
-    if not is_allowed_chat(update):
-        await message.reply_text(
-            f"❌ Bu bot yalnızca {allowed_chat_text()} sohbetlerinde çalışır."
-        )
-        return
-
-    if not await can_manage_giveaway(update, context):
-        await message.reply_text("❌ Bu komutu yalnızca çekiliş yöneticisi kullanabilir.")
-        return
-
-    active = get_active_giveaway()
-    if not active or active["chat_id"] != chat.id:
-        await message.reply_text("❌ Bu sohbette aktif çekiliş yok.")
-        return
-
-    connection = get_db()
-    try:
-        participants = connection.execute(
-            "SELECT * FROM participants WHERE giveaway_id = ? ORDER BY id ASC",
-            (active["id"],),
-        ).fetchall()
-        connection.execute(
-            """
-            UPDATE giveaways
-            SET active = 0, ended_at = ?
-            WHERE id = ?
-            """,
-            (utc_now(), active["id"]),
-        )
-        connection.commit()
-    finally:
-        connection.close()
-
-    if not participants:
-        text = (
-            "🏁 <b>HEROPRIME ÇEKİLİŞ SONA ERDİ!</b>\n\n"
-            "👥 Toplam katılımcı: <b>0</b>\n"
-            f"🏆 Kazanan sayısı: <b>{active['winner_count']}</b>\n\n"
-            "❌ Bu çekilişte kazanan bulunamadı."
-        )
-        try:
-            await context.bot.edit_message_text(
-                chat_id=active["chat_id"],
-                message_id=active["message_id"],
-                text=text,
-                parse_mode="HTML",
-                reply_markup=None,
-            )
-        except Exception:
-            pass
-        await send_admin_dm(
-            context,
-            "🏁 <b>ÇEKİLİŞ BİTTİ</b>\n\n"
-            f"💬 Sohbet: <b>{escape(chat.title or str(chat.id))}</b>\n"
-            "👥 Toplam katılımcı: <b>0</b>\n"
-            "❌ Kazanan bulunamadı.",
-        )
-        return
-
-    winner_count = min(active["winner_count"], len(participants))
-    winners = secrets.SystemRandom().sample(list(participants), winner_count)
-
-    group_lines = []
-    admin_lines = []
-
-    for i, winner in enumerate(winners, 1):
-        identity = (
-            f"@{winner['telegram_username']}"
-            if winner["telegram_username"]
-            else winner["telegram_name"]
-        )
-        safe = escape(identity)
-        group_lines.append(f"{i}. {safe}")
-        admin_lines.append(
-            f"{i}. <b>{safe}</b>\n"
-            f"   🆔 Telegram ID: <code>{winner['telegram_user_id']}</code>"
-        )
-
-    finished = build_finished_text(
-        get_giveaway_text(),
-        len(participants),
-        winner_count,
-        "\n".join(group_lines),
-    )
-
-    try:
-        await context.bot.edit_message_text(
-            chat_id=active["chat_id"],
-            message_id=active["message_id"],
-            text=finished,
-            parse_mode="HTML",
-            reply_markup=None,
-        )
-    except Exception:
-        pass
-
-    await send_admin_dm(
-        context,
-        "🏁 <b>ÇEKİLİŞ BİTTİ</b>\n\n"
-        f"💬 Sohbet: <b>{escape(chat.title or str(chat.id))}</b>\n"
-        f"👥 Toplam katılımcı: <b>{len(participants)}</b>\n"
-        f"🏆 Kazanan sayısı: <b>{winner_count}</b>\n\n"
-        "<b>🎉 KAZANANLAR</b>\n\n"
-        + "\n\n".join(admin_lines),
-    )
-
-    await message.reply_text(
-        "🏁 <b>Çekiliş sonlandırıldı!</b>\n\n"
-        f"👥 Toplam katılımcı: <b>{len(participants)}</b>\n"
-        f"🏆 Kazanan: <b>{winner_count}</b>",
-        parse_mode="HTML",
-    )
-
-
-async def giveaway_status(update, context):
-    message = update.effective_message
-    chat = update.effective_chat
-    if not message or not chat:
-        return
-
-    if not is_allowed_chat(update):
-        await message.reply_text(
-            f"❌ Bu bot yalnızca {allowed_chat_text()} sohbetlerinde çalışır."
-        )
-        return
-
-    active = get_active_giveaway()
-    if not active or active["chat_id"] != chat.id:
-        await message.reply_text("ℹ️ Bu sohbette aktif çekiliş yok.")
-        return
-
-    count = get_participant_count(active["id"])
-    await message.reply_text(
-        "📊 <b>ÇEKİLİŞ DURUMU</b>\n\n"
-        f"🏆 Kazanan sayısı: <b>{active['winner_count']}</b>\n"
-        f"👥 Katılımcı: <b>{count}</b>\n\n"
-        "🟢 Çekiliş aktif.",
-        parse_mode="HTML",
-    )
-
-
-# =========================================================
-# ÇEKİLİŞ METNİ
-# =========================================================
-
-async def giveaway_text_command(update, context):
-    message = update.effective_message
-    user = update.effective_user
-    if not message or not user or not is_admin(user.id):
-        return
-    if message.chat.type != "private":
-        await message.reply_text("🔒 Bu komut yalnızca özelden kullanılabilir.")
-        return
-
-    context.user_data["waiting_for_giveaway_text"] = True
-    await message.reply_text(
-        "📝 <b>Yeni çekiliş metnini gönder.</b>\n\n"
-        "❌ Vazgeçmek için /iptal",
-        parse_mode="HTML",
-    )
-
-
-async def save_new_giveaway_text(update, context):
-    message = update.effective_message
-    user = update.effective_user
-    if not message or not user or not is_admin(user.id):
-        return
-    if message.chat.type != "private":
-        return
-    if not context.user_data.get("waiting_for_giveaway_text"):
-        return
-
-    text = (message.text or "").strip()
-    if not text:
-        await message.reply_text("❌ Metin boş olamaz.")
-        return
-    if len(text) > 3500:
-        await message.reply_text("❌ Metin 3500 karakterden kısa olmalı.")
-        return
-
-    safe = escape(text)
-    save_giveaway_text(safe)
-    context.user_data["waiting_for_giveaway_text"] = False
-
-    await message.reply_text(
-        "✅ <b>Çekiliş metni güncellendi.</b>\n\n"
-        f"{safe}",
-        parse_mode="HTML",
-    )
-
-
-async def cancel_text_edit(update, context):
-    message = update.effective_message
-    user = update.effective_user
-    if not message or not user or not is_admin(user.id):
-        return
-    if message.chat.type != "private":
-        return
-
-    context.user_data.clear()
-    await message.reply_text("❌ İşlem iptal edildi.")
-
-
-# =========================================================
-# ETKİNLİK - POST YANITLARINI TOPLAMA
-# =========================================================
-
-def parse_public_post_link(link: str):
-    link = (link or "").strip()
-
-    if not link.startswith(("https://t.me/", "http://t.me/")):
-        return None
-
-    parsed = urlparse(link)
-    parts = [x for x in parsed.path.split("/") if x]
-
-    # Public: https://t.me/heroprimesohbet/1234
-    if len(parts) >= 2 and parts[0] != "c":
-        try:
-            message_id = int(parts[1])
-        except ValueError:
-            return None
-
-        return {
-            "username": normalize_username(parts[0]),
-            "message_id": message_id,
-        }
-
-    return None
-
-
-def get_active_event():
-    connection = get_db()
-    try:
-        return connection.execute(
-            """
-            SELECT * FROM events
-            WHERE active = 1
-            ORDER BY id DESC LIMIT 1
-            """
-        ).fetchone()
-    finally:
-        connection.close()
-
-
-def create_event(post_chat_id, post_message_id, post_link, created_by):
-    connection = get_db()
-    try:
-        cursor = connection.execute(
-            """
-            INSERT INTO events(
-                post_chat_id, post_message_id, post_link,
-                created_by, created_at, active
-            )
-            VALUES (?, ?, ?, ?, ?, 1)
-            """,
-            (
-                post_chat_id,
-                post_message_id,
-                post_link,
-                created_by,
-                utc_now(),
-            ),
-        )
-        connection.commit()
-        return cursor.lastrowid
-    finally:
-        connection.close()
-
-
-def get_event_entries(event_id):
-    connection = get_db()
-    try:
-        return connection.execute(
-            """
-            SELECT entered_text
-            FROM event_entries
-            WHERE event_id = ?
-            ORDER BY id ASC
-            """,
-            (event_id,),
-        ).fetchall()
-    finally:
-        connection.close()
-
-
-def add_event_entry(event_id, message):
-    text = (message.text or "").strip()
-    if not text:
-        return False
-
-    user = message.from_user
-    user_id = user.id if user else None
-    username = user.username if user else None
-
-    connection = get_db()
-    try:
-        try:
-            connection.execute(
-                """
-                INSERT INTO event_entries(
-                    event_id, telegram_user_id, telegram_username,
-                    entered_text, reply_message_id, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event_id,
-                    user_id,
-                    username,
-                    text,
-                    message.message_id,
-                    utc_now(),
-                ),
-            )
-            connection.commit()
-            return True
-        except sqlite3.IntegrityError:
-            return False
-    finally:
-        connection.close()
-
-
-def find_event_for_reply(chat_id, reply_message_id):
-    connection = get_db()
-    try:
-        return connection.execute(
-            """
-            SELECT * FROM events
-            WHERE active = 1
-              AND post_chat_id = ?
-              AND post_message_id = ?
-            ORDER BY id DESC LIMIT 1
-            """,
-            (chat_id, reply_message_id),
-        ).fetchone()
-    finally:
-        connection.close()
-
-
-def event_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔗 Post Linki İlet", callback_data="event:link")],
-        [InlineKeyboardButton("📋 Liste", callback_data="event:list")],
-        [InlineKeyboardButton("🛑 Etkinliği Kapat", callback_data="event:close")],
-    ])
-
-
-async def event_panel(update, context):
-    message = update.effective_message
-    user = update.effective_user
-
-    if not message or not user or not is_admin(user.id):
-        return
-
-    if message.chat.type != "private":
-        return
-
-    active = get_active_event()
-
-    if active:
-        entries = get_event_entries(active["id"])
-        status = (
-            "🟢 <b>Aktif etkinlik</b>\n"
-            f"👥 Toplanan yanıt: <b>{len(entries)}</b>\n"
-            f"🔗 {escape(active['post_link'])}\n\n"
-        )
-    else:
-        status = "⚪ Aktif etkinlik yok.\n\n"
-
-    await message.reply_text(
-        "🎯 <b>ETKİNLİK PANELİ</b>\n\n"
-        f"{status}"
-        "Post linkini gönderdiğinde bu postun bundan sonra "
-        "gelen doğrudan yanıtlarının yazılarını kaydeder.\n\n"
-        "⚠️ Telegram Bot API geçmişteki yanıtları linkten "
-        "geriye dönük çekemez.",
-        parse_mode="HTML",
-        reply_markup=event_keyboard(),
-    )
-
-
-async def event_command(update, context):
-    await event_panel(update, context)
-
-
-async def event_callback(update, context):
-    query = update.callback_query
-    user = query.from_user if query else None
-
-    if not query or not user or not is_admin(user.id):
-        if query:
-            await query.answer("❌ Yetkin yok.", show_alert=True)
         return
 
     data = query.data or ""
 
-    if data == "event:panel":
-        await query.answer()
-        await event_panel(update, context)
-        return
+    # -----------------------------------------------------
+    # YENİ SITE GÖRÜNÜRLÜĞÜ
+    # -----------------------------------------------------
 
-    if data == "event:link":
-        context.user_data["waiting_for_event_link"] = True
-        await query.answer()
-        await query.message.reply_text(
-            "🔗 Etkinlik postunun linkini gönder.\n\n"
-            "Örnek:\n"
-            "https://t.me/heroprimesohbet/1234\n\n"
-            "❌ İptal: /iptal"
-        )
-        return
-
-    if data == "event:list":
-        active = get_active_event()
-        if not active:
-            await query.answer("❌ Aktif etkinlik yok.", show_alert=True)
-            return
-
-        entries = get_event_entries(active["id"])
-        if not entries:
-            await query.answer("Henüz yanıt toplanmadı.", show_alert=True)
-            return
-
-        lines = [
-            f"{i}. {escape(row['entered_text'])}"
-            for i, row in enumerate(entries, 1)
-        ]
-        text = (
-            "📋 <b>ETKİNLİK İSİM LİSTESİ</b>\n\n"
-            f"👥 Toplam: <b>{len(entries)}</b>\n\n"
-            + "\n".join(lines)
+    if data.startswith(
+        SITE_ADMIN_PREFIX + "vis:"
+    ):
+        flow = context.user_data.get(
+            "site_flow"
         )
 
-        await query.answer()
-
-        if len(text) <= 3900:
-            await query.message.reply_text(text, parse_mode="HTML")
-        else:
-            from io import BytesIO
-            raw = "\n".join(
-                f"{i}. {row['entered_text']}"
-                for i, row in enumerate(entries, 1)
-            ).encode("utf-8")
-            file_obj = BytesIO(raw)
-            file_obj.name = "etkinlik_listesi.txt"
-            await query.message.reply_document(
-                document=file_obj,
-                caption=f"📋 Etkinlik listesi — {len(entries)} kişi",
+        if not flow:
+            await query.answer(
+                "❌ İşlem süresi doldu.",
+                show_alert=True,
             )
-        return
-
-    if data == "event:close":
-        active = get_active_event()
-        if not active:
-            await query.answer("❌ Aktif etkinlik yok.", show_alert=True)
             return
 
-        connection = get_db()
+        visible = 1 if data.endswith(":1") else 0
+
+        add_site(
+            flow["name"],
+            flow["url"],
+            visible,
+        )
+
+        context.user_data.clear()
+
+        await query.answer(
+            "Kaydedildi."
+        )
+
+        await query.message.reply_text(
+            "✅ Site başarıyla eklendi."
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # DÜZENLENEN SITE GÖRÜNÜRLÜĞÜ
+    # -----------------------------------------------------
+
+    if data.startswith(
+        SITE_ADMIN_PREFIX + "editvis:"
+    ):
+        flow = context.user_data.get(
+            "site_flow"
+        )
+
+        if not flow:
+            await query.answer(
+                "❌ İşlem süresi doldu.",
+                show_alert=True,
+            )
+            return
+
+        visible = 1 if data.endswith(":1") else 0
+
+        update_site(
+            flow["id"],
+            flow["name"],
+            flow["url"],
+            visible,
+        )
+
+        context.user_data.clear()
+
+        await query.answer(
+            "Güncellendi."
+        )
+
+        await query.message.reply_text(
+            "✅ Site güncellendi."
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # TANITIM GÖRSELİ
+    # -----------------------------------------------------
+
+    if data == SITE_ADMIN_PREFIX + "p_skip:0":
+        flow = context.user_data.get(
+            "promo_flow"
+        )
+
+        if not flow:
+            await query.answer(
+                "❌ İşlem süresi doldu.",
+                show_alert=True,
+            )
+            return
+
+        flow["step"] = "image"
+
+        await query.answer()
+
+        await query.message.reply_text(
+            "🖼️ Şimdi tanıtım görselini gönder."
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # TANITIM GÖRSELİNİ GEÇ
+    # -----------------------------------------------------
+
+    if data == SITE_ADMIN_PREFIX + "p_skip:1":
+        flow = context.user_data.get(
+            "promo_flow"
+        )
+
+        if not flow:
+            await query.answer(
+                "❌ İşlem süresi doldu.",
+                show_alert=True,
+            )
+            return
+
+        flow["step"] = "text"
+
+        await query.answer()
+
+        await query.message.reply_text(
+            "📝 Tanıtım metnini gönder."
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # BUTON EKLE
+    # -----------------------------------------------------
+
+    if data == SITE_ADMIN_PREFIX + "btn_add":
+        flow = context.user_data.get(
+            "promo_flow"
+        )
+
+        if not flow:
+            await query.answer(
+                "❌ İşlem süresi doldu.",
+                show_alert=True,
+            )
+            return
+
+        flow["step"] = "button_text"
+
+        await query.answer()
+
+        await query.message.reply_text(
+            "🔘 Buton yazısını gönder."
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # TANITIM KAYDET
+    # -----------------------------------------------------
+
+    if data == SITE_ADMIN_PREFIX + "promo_save":
+        flow = context.user_data.get(
+            "promo_flow"
+        )
+
+        if (
+            not flow
+            or not flow.get("command")
+            or not flow.get("text")
+        ):
+            await query.answer(
+                "❌ Eksik bilgi.",
+                show_alert=True,
+            )
+            return
+
         try:
-            connection.execute(
-                "UPDATE events SET active = 0 WHERE id = ?",
-                (active["id"],),
+            save_promotion(
+                flow["command"],
+                flow["text"],
+                flow.get("image"),
+                flow.get("buttons", []),
+                flow.get("id"),
             )
-            connection.commit()
-        finally:
-            connection.close()
 
-        context.user_data["waiting_for_event_link"] = False
-        await query.answer("Etkinlik kapatıldı.")
-        await query.message.reply_text(
-            "🛑 <b>Etkinlik kapatıldı.</b>",
-            parse_mode="HTML",
+        except sqlite3.IntegrityError:
+            await query.answer(
+                "❌ Bu komut zaten kullanılıyor.",
+                show_alert=True,
+            )
+            return
+
+        context.user_data.clear()
+
+        await query.answer(
+            "Kaydedildi."
         )
 
+        await query.message.reply_text(
+            "✅ Tanıtım başarıyla kaydedildi."
+        )
 
-async def save_event_link(update, context):
+        return
+
+    await query.answer()
+
+
+# =========================================================
+# SITE ADMIN TEXT FLOW
+# =========================================================
+
+async def site_admin_flow_message(
+    update,
+    context,
+):
     message = update.effective_message
     user = update.effective_user
 
-    if not message or not user or not is_admin(user.id):
-        return
+    if (
+        not message
+        or not user
+        or not is_admin(user.id)
+        or message.chat.type != "private"
+    ):
+        return False
 
-    if message.chat.type != "private":
-        return
-
-    if not context.user_data.get("waiting_for_event_link"):
-        return
-
-    link = (message.text or "").strip()
-
-    if link == "/iptal":
-        context.user_data["waiting_for_event_link"] = False
-        await message.reply_text("❌ Etkinlik işlemi iptal edildi.")
-        return
-
-    parsed = parse_public_post_link(link)
-    if not parsed:
-        await message.reply_text(
-            "❌ Public Telegram post linki gönder.\n\n"
-            "Örnek:\nhttps://t.me/heroprimesohbet/1234"
-        )
-        return
-
-    if get_active_event():
-        await message.reply_text(
-            "⚠️ Zaten aktif bir etkinlik var. "
-            "Önce etkinliği kapat."
-        )
-        return
-
-    try:
-        target_chat = await context.bot.get_chat(
-            f"@{parsed['username']}"
-        )
-    except Exception as error:
-        logger.warning("Etkinlik sohbeti alınamadı: %s", error)
-        await message.reply_text(
-            "❌ Postun bulunduğu sohbeti bot göremiyor.\n\n"
-            "Botu ilgili sohbet/grup ve gerekiyorsa yorum grubuna ekle."
-        )
-        return
-
-    event_id = create_event(
-        target_chat.id,
-        parsed["message_id"],
-        link,
-        user.id,
+    flow = context.user_data.get(
+        "site_flow"
     )
 
-    context.user_data["waiting_for_event_link"] = False
+    if not flow:
+        return False
+
+    text = (
+        message.text
+        or ""
+    ).strip()
+
+    if text == "/iptal":
+        context.user_data.clear()
+
+        await message.reply_text(
+            "❌ İşlem iptal edildi."
+        )
+
+        return True
+
+    step = flow.get("step")
+
+    # -----------------------------------------------------
+    # SITE ADI
+    # -----------------------------------------------------
+
+    if step == "name":
+        if (
+            not text
+            or len(text) > SITE_MAX_NAME
+        ):
+            await message.reply_text(
+                "❌ Geçerli bir site adı gönder."
+            )
+            return True
+
+        flow["name"] = text
+        flow["step"] = "url"
+
+        await message.reply_text(
+            "🔗 Site linkini gönder.\n\n"
+            "Örnek:\n"
+            "<code>https://site.com</code>",
+            parse_mode="HTML",
+        )
+
+        return True
+
+    # -----------------------------------------------------
+    # SITE URL
+    # -----------------------------------------------------
+
+    if step == "url":
+        if not valid_http_url(text):
+            await message.reply_text(
+                "❌ Geçerli bir http/https linki gönder."
+            )
+            return True
+
+        flow["url"] = text
+        flow["step"] = "visible"
+
+        await message.reply_text(
+            "👁️ /site menüsünde görünsün mü?",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "✅ Evet",
+                            callback_data=(
+                                SITE_ADMIN_PREFIX
+                                + "vis:1"
+                            ),
+                        ),
+                        InlineKeyboardButton(
+                            "❌ Hayır",
+                            callback_data=(
+                                SITE_ADMIN_PREFIX
+                                + "vis:0"
+                            ),
+                        ),
+                    ]
+                ]
+            ),
+        )
+
+        return True
+
+    # -----------------------------------------------------
+    # DÜZENLEME - İSİM
+    # -----------------------------------------------------
+
+    if step == "edit_name":
+        if (
+            not text
+            or len(text) > SITE_MAX_NAME
+        ):
+            await message.reply_text(
+                "❌ Geçerli bir site adı gönder."
+            )
+            return True
+
+        flow["name"] = text
+        flow["step"] = "edit_url"
+
+        await message.reply_text(
+            "🔗 Yeni site linkini gönder."
+        )
+
+        return True
+
+    # -----------------------------------------------------
+    # DÜZENLEME - URL
+    # -----------------------------------------------------
+
+    if step == "edit_url":
+        if not valid_http_url(text):
+            await message.reply_text(
+                "❌ Geçerli bir link gönder."
+            )
+            return True
+
+        flow["url"] = text
+        flow["step"] = "edit_visible"
+
+        await message.reply_text(
+            "👁️ /site görünürlüğü?",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "🟢 Açık",
+                            callback_data=(
+                                SITE_ADMIN_PREFIX
+                                + "editvis:1"
+                            ),
+                        ),
+                        InlineKeyboardButton(
+                            "⚪ Kapalı",
+                            callback_data=(
+                                SITE_ADMIN_PREFIX
+                                + "editvis:0"
+                            ),
+                        ),
+                    ]
+                ]
+            ),
+        )
+
+        return True
+
+    # -----------------------------------------------------
+    # SIRALAMA
+    # -----------------------------------------------------
+
+    if step == "order":
+        try:
+            ids = [
+                int(x.strip())
+                for x in text.split(",")
+                if x.strip()
+            ]
+
+        except ValueError:
+            await message.reply_text(
+                "❌ ID formatı hatalı."
+            )
+            return True
+
+        sites = get_sites(False)
+
+        valid = {
+            site["id"]
+            for site in sites
+        }
+
+        if (
+            set(ids) != valid
+            or len(ids) != len(valid)
+        ):
+            await message.reply_text(
+                "❌ Tüm site ID'lerini "
+                "birer kez sıralamalısın."
+            )
+            return True
+
+        reorder_sites(ids)
+
+        context.user_data.clear()
+
+        await message.reply_text(
+            "✅ Site sırası güncellendi."
+        )
+
+        return True
+
+    return False
+
+
+# =========================================================
+# TANITIM ADMIN PHOTO
+# =========================================================
+
+async def site_admin_photo(
+    update,
+    context,
+):
+    message = update.effective_message
+    user = update.effective_user
+
+    if (
+        not message
+        or not user
+        or not is_admin(user.id)
+        or message.chat.type != "private"
+    ):
+        return False
+
+    flow = context.user_data.get(
+        "promo_flow"
+    )
+
+    if (
+        not flow
+        or flow.get("step") != "image"
+    ):
+        return False
+
+    if not message.photo:
+        return False
+
+    flow["image"] = (
+        message.photo[-1].file_id
+    )
+
+    flow["step"] = "text"
 
     await message.reply_text(
-        "✅ <b>Etkinlik kaydedildi.</b>\n\n"
-        f"🔗 {escape(link)}\n"
-        f"🆔 Etkinlik: <code>{event_id}</code>\n\n"
-        "📥 Bundan sonra bu posta doğrudan yanıt olarak "
-        "yazılan metinleri otomatik topluyorum.\n\n"
-        "📋 Liste butonundan isimleri alabilirsin.",
-        parse_mode="HTML",
-        reply_markup=event_keyboard(),
+        "📝 Tanıtım metnini gönder.\n\n"
+        "HTML gerekmez."
     )
 
+    return True
 
-async def collect_event_reply(update, context):
+
+# =========================================================
+# TANITIM TEXT FLOW
+# =========================================================
+
+async def site_admin_promo_flow(
+    update,
+    context,
+):
+    message = update.effective_message
+    user = update.effective_user
+
+    if (
+        not message
+        or not user
+        or not is_admin(user.id)
+        or message.chat.type != "private"
+    ):
+        return False
+
+    flow = context.user_data.get(
+        "promo_flow"
+    )
+
+    if not flow:
+        return False
+
+    text = (
+        message.text
+        or ""
+    ).strip()
+
+    if text == "/iptal":
+        context.user_data.clear()
+
+        await message.reply_text(
+            "❌ İşlem iptal edildi."
+        )
+
+        return True
+
+    step = flow.get("step")
+
+    # -----------------------------------------------------
+    # KOMUT
+    # -----------------------------------------------------
+
+    if step == "command":
+        command = normalize_site_command(
+            text
+        )
+
+        if not command:
+            await message.reply_text(
+                "❌ Geçerli bir komut gönder.\n\n"
+                "Örnek: <code>!raconbet</code>",
+                parse_mode="HTML",
+            )
+            return True
+
+        old = get_promotion_by_command(
+            command
+        )
+
+        if (
+            old
+            and old["id"] != flow.get("id")
+        ):
+            await message.reply_text(
+                "❌ Bu tanıtım komutu zaten kullanılıyor."
+            )
+            return True
+
+        flow["command"] = command
+        flow["step"] = "image"
+
+        await message.reply_text(
+            "🖼️ Tanıtıma görsel eklemek ister misin?",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "🖼️ Görsel Ekle",
+                            callback_data=(
+                                SITE_ADMIN_PREFIX
+                                + "p_skip:0"
+                            ),
+                        ),
+                        InlineKeyboardButton(
+                            "⏭️ Görseli Geç",
+                            callback_data=(
+                                SITE_ADMIN_PREFIX
+                                + "p_skip:1"
+                            ),
+                        ),
+                    ]
+                ]
+            ),
+        )
+
+        return True
+
+    # -----------------------------------------------------
+    # TANITIM METNİ
+    # -----------------------------------------------------
+
+    if step in (
+        "text",
+        "edit_text",
+    ):
+        if (
+            not text
+            or len(text) > SITE_MAX_TEXT
+        ):
+            await message.reply_text(
+                "❌ Metin boş olamaz ve "
+                "3500 karakteri geçemez."
+            )
+            return True
+
+        flow["text"] = escape(text)
+        flow["step"] = "buttons"
+
+        await message.reply_text(
+            "🔘 Tanıtıma buton ekleyebilirsin.",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "➕ Buton Ekle",
+                            callback_data=(
+                                SITE_ADMIN_PREFIX
+                                + "btn_add"
+                            ),
+                        ),
+                        InlineKeyboardButton(
+                            "💾 Kaydet",
+                            callback_data=(
+                                SITE_ADMIN_PREFIX
+                                + "promo_save"
+                            ),
+                        ),
+                    ]
+                ]
+            ),
+        )
+
+        return True
+
+    # -----------------------------------------------------
+    # BUTON ADI
+    # -----------------------------------------------------
+
+    if step == "button_text":
+        if (
+            not text
+            or len(text) > 64
+        ):
+            await message.reply_text(
+                "❌ Buton metni "
+                "64 karakteri geçmesin."
+            )
+            return True
+
+        flow["button_text"] = text
+        flow["step"] = "button_url"
+
+        await message.reply_text(
+            "🔗 Bu butonun URL'sini gönder."
+        )
+
+        return True
+
+    # -----------------------------------------------------
+    # BUTON URL
+    # -----------------------------------------------------
+
+    if step == "button_url":
+        if not valid_http_url(text):
+            await message.reply_text(
+                "❌ Geçerli bir URL gönder."
+            )
+            return True
+
+        button_text = flow.pop(
+            "button_text"
+        )
+
+        flow.setdefault(
+            "buttons",
+            [],
+        ).append(
+            {
+                "text": button_text,
+                "url": text,
+            }
+        )
+
+        flow["step"] = "buttons"
+
+        await message.reply_text(
+            "✅ Buton eklendi.\n\n"
+            "Başka buton ekleyebilir veya kaydedebilirsin.",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "➕ Buton Ekle",
+                            callback_data=(
+                                SITE_ADMIN_PREFIX
+                                + "btn_add"
+                            ),
+                        ),
+                        InlineKeyboardButton(
+                            "💾 Kaydet",
+                            callback_data=(
+                                SITE_ADMIN_PREFIX
+                                + "promo_save"
+                            ),
+                        ),
+                    ]
+                ]
+            ),
+        )
+
+        return True
+
+    return False
+
+
+# =========================================================
+# TANITIM KOMUTLARI
+# =========================================================
+
+async def run_promotion_command(
+    update,
+    context,
+):
     message = update.effective_message
 
-    if not message or not message.reply_to_message:
+    if (
+        not message
+        or not message.text
+    ):
         return
 
-    if not message.text or not message.text.strip():
-        return
-
-    event = find_event_for_reply(
-        message.chat.id,
-        message.reply_to_message.message_id,
+    match = re.match(
+        r"^\s*([!./])([A-Za-z0-9_]+)(?:\s|$)",
+        message.text,
     )
 
-    if not event:
+    if not match:
         return
 
-    if add_event_entry(event["id"], message):
-        logger.info(
-            "Etkinlik yanıtı kaydedildi: event=%s message=%s",
-            event["id"],
-            message.message_id,
+    command = normalize_site_command(
+        match.group(2)
+    )
+
+    reserved_commands = {
+        "site",
+        "siteyonetim",
+        "start",
+        "myid",
+        "iptal",
+    }
+
+    if command in reserved_commands:
+        return
+
+    promo = get_promotion_by_command(
+        command
+    )
+
+    if not promo:
+        return
+
+    buttons = json.loads(
+        promo["buttons_json"]
+        or "[]"
+    )
+
+    markup = promotion_buttons_markup(
+        buttons
+    )
+
+    text = promo["text"]
+
+    if promo["image_file_id"]:
+        await message.reply_photo(
+            photo=promo["image_file_id"],
+            caption=text,
+            parse_mode="HTML",
+            reply_markup=markup,
+        )
+
+    else:
+        await message.reply_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=markup,
         )
 
 
@@ -1528,46 +1952,77 @@ async def collect_event_reply(update, context):
 # /START
 # =========================================================
 
-async def start_command(update, context):
+async def start_command(
+    update,
+    context,
+):
     message = update.effective_message
     user = update.effective_user
 
-    if not message or not user or message.chat.type != "private":
+    if (
+        not message
+        or not user
+        or message.chat.type != "private"
+    ):
         return
 
     if not is_admin(user.id):
         await message.reply_text(
             "👋 <b>Hoş geldin!</b>\n\n"
-            "🤖 HEROPRIME bot aktif.\n"
-            "🆔 /myid",
+            "🤖 HEROPRIME Site Botu aktif.\n\n"
+            "🌐 Siteleri görmek için "
+            "<code>/site</code> kullanabilirsin.\n"
+            "🆔 <code>/myid</code>",
             parse_mode="HTML",
         )
         return
 
     await message.reply_text(
-        "🤖 <b>HEROPRIME Çekiliş Botu</b>\n\n"
+        "🤖 <b>HEROPRIME SİTE BOTU</b>\n\n"
         "✅ Bot aktif.\n\n"
-        "<b>Çekiliş:</b>\n"
-        "/cekilismet\n"
-        "/cekilis 3\n"
-        "/cekilisdurum\n"
-        "/stopcekilis\n\n"
-        "<b>Etkinlik:</b>\n"
-        "/etkinlik",
+        "🌐 <b>Site sistemi</b>\n"
+        "/site\n"
+        "/siteyonetim\n\n"
+        "📢 <b>Tanıtım sistemi</b>\n"
+        "Özel tanıtım komutlarını "
+        "site yönetiminden oluşturabilirsin.",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🎯 Etkinlik", callback_data="event:panel")
-        ]]),
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "⚙️ Site Yönetimi",
+                        callback_data=(
+                            SITE_ADMIN_PREFIX
+                            + "panel"
+                        ),
+                    )
+                ]
+            ]
+        ),
     )
 
 
-async def my_id(update, context):
+# =========================================================
+# /MYID
+# =========================================================
+
+async def my_id(
+    update,
+    context,
+):
     message = update.effective_message
     user = update.effective_user
+
     if not message or not user:
         return
 
-    username = f"@{user.username}" if user.username else "Yok"
+    username = (
+        f"@{user.username}"
+        if user.username
+        else "Yok"
+    )
+
     await message.reply_text(
         "🆔 <b>Telegram Bilgilerin</b>\n\n"
         f"ID: <code>{user.id}</code>\n"
@@ -1581,23 +2036,37 @@ async def my_id(update, context):
 # HATA / WEBHOOK
 # =========================================================
 
-async def error_handler(update, context):
-    if isinstance(context.error, Conflict):
-        logger.error(
-            "409 Conflict: aynı BOT_TOKEN ile başka bir polling instance çalışıyor."
-        )
-        return
-    logger.error("Telegram bot hatası: %s", context.error, exc_info=context.error)
+async def error_handler(
+    update,
+    context,
+):
+    logger.error(
+        "Telegram bot hatası: %s",
+        context.error,
+        exc_info=context.error,
+    )
 
 
-async def clear_old_webhook(application):
+async def clear_old_webhook(
+    application,
+):
     try:
         info = await application.bot.get_webhook_info()
+
         if info.url:
-            await application.bot.delete_webhook(drop_pending_updates=True)
-            logger.info("Eski webhook temizlendi.")
+            await application.bot.delete_webhook(
+                drop_pending_updates=True
+            )
+
+            logger.info(
+                "Eski webhook temizlendi."
+            )
+
     except Exception as error:
-        logger.warning("Webhook temizlenemedi: %s", error)
+        logger.warning(
+            "Webhook temizlenemedi: %s",
+            error,
+        )
 
 
 # =========================================================
@@ -1607,12 +2076,14 @@ async def clear_old_webhook(application):
 def main():
     if not BOT_TOKEN:
         raise RuntimeError(
-            "BOT_TOKEN bulunamadı. Railway Variables içine BOT_TOKEN ekle."
+            "BOT_TOKEN bulunamadı. "
+            "Railway Variables içine BOT_TOKEN ekle."
         )
 
     if not ADMIN_IDS:
         raise RuntimeError(
-            "ADMIN_IDS bulunamadı. Railway Variables içine ADMIN_IDS ekle."
+            "ADMIN_IDS bulunamadı. "
+            "Railway Variables içine ADMIN_IDS ekle."
         )
 
     init_database()
@@ -1624,83 +2095,149 @@ def main():
         .build()
     )
 
-    # Çekiliş
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("myid", my_id))
-    application.add_handler(CommandHandler("cekilis", start_giveaway))
-    application.add_handler(CommandHandler("cekilismet", giveaway_text_command))
-    application.add_handler(CommandHandler("stopcekilis", stop_giveaway))
-    application.add_handler(CommandHandler("cekilisdurum", giveaway_status))
-    application.add_handler(CommandHandler("iptal", cancel_text_edit))
+    # -----------------------------------------------------
+    # TEMEL KOMUTLAR
+    # -----------------------------------------------------
 
-    # Etkinlik
-    application.add_handler(CommandHandler("etkinlik", event_command))
     application.add_handler(
-        CallbackQueryHandler(
-            event_callback,
-            pattern=r"^event:(panel|link|list|close)$",
+        CommandHandler(
+            "start",
+            start_command,
         )
     )
 
-    # Çekiliş katıl
     application.add_handler(
-        CallbackQueryHandler(
-            join_giveaway_callback,
-            pattern=r"^giveaway_join:\d+$",
+        CommandHandler(
+            "myid",
+            my_id,
         )
     )
 
-    # Yeni etkinlik yanıtlarını yakala.
+    # -----------------------------------------------------
+    # SITE
+    # -----------------------------------------------------
+
     application.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            collect_event_reply,
-        ),
-        group=0,
+        CommandHandler(
+            "site",
+            site_command,
+        )
     )
 
-    # Özelden etkinlik linki.
     application.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
-            save_event_link,
-        ),
-        group=0,
+        CommandHandler(
+            "siteyonetim",
+            site_admin_command,
+        )
     )
 
-    # Özelden çekiliş metni.
+    # !site / .site
     application.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
-            save_new_giveaway_text,
-        ),
-        group=1,
+            filters.Regex(
+                r"^\s*[!.]site\s*$"
+            ),
+            site_alias_command,
+        )
     )
 
-    # Site / tanıtım sistemi
-    application.add_handler(CommandHandler("site", site_command))
-    application.add_handler(CommandHandler("siteyonetim", site_admin_command))
-    application.add_handler(MessageHandler(filters.Regex(r"^\s*[!.]site\s*$"), site_alias_command))
-    application.add_handler(CallbackQueryHandler(site_admin_callback_extended, pattern=r"^siteadmin:(vis:|editvis:|p_skip:|btn_add$|promo_save$)"))
-    application.add_handler(CallbackQueryHandler(site_admin_callback, pattern=r"^siteadmin:"))
+    # -----------------------------------------------------
+    # SITE ADMIN CALLBACK
+    # -----------------------------------------------------
 
-    # Admin site/tanıtım metin ve görsel akışları
-    application.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, site_admin_photo), group=2)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, site_admin_flow_message), group=2)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, site_admin_promo_flow), group=3)
+    application.add_handler(
+        CallbackQueryHandler(
+            site_admin_callback_extended,
+            pattern=(
+                r"^siteadmin:"
+                r"(vis:|editvis:|p_skip:|"
+                r"btn_add$|promo_save$)"
+            ),
+        )
+    )
 
-    # !raconbet / .raconbet / /raconbet gibi tanıtım komutları
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, run_promotion_command), group=4)
+    application.add_handler(
+        CallbackQueryHandler(
+            site_admin_callback,
+            pattern=r"^siteadmin:",
+        )
+    )
 
-    application.add_error_handler(error_handler)
+    # -----------------------------------------------------
+    # SITE ADMIN GÖRSEL
+    # -----------------------------------------------------
 
-    logger.info("HEROPRIME Çekiliş + Etkinlik Botu başlatılıyor...")
+    application.add_handler(
+        MessageHandler(
+            filters.PHOTO
+            & filters.ChatType.PRIVATE,
+            site_admin_photo,
+            ),
+        group=2,
+    )
+
+    # -----------------------------------------------------
+    # SITE ADMIN METİN
+    # -----------------------------------------------------
+
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT
+            & ~filters.COMMAND
+            & filters.ChatType.PRIVATE,
+            site_admin_flow_message,
+        ),
+        group=2,
+    )
+
+    # -----------------------------------------------------
+    # TANITIM ADMIN METİN AKIŞI
+    # -----------------------------------------------------
+
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT
+            & ~filters.COMMAND
+            & filters.ChatType.PRIVATE,
+            site_admin_promo_flow,
+        ),
+        group=3,
+    )
+
+    # -----------------------------------------------------
+    # TANITIM KOMUTLARI
+    # !raconbet
+    # .raconbet
+    # /raconbet
+    # -----------------------------------------------------
+
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT
+            & ~filters.COMMAND,
+            run_promotion_command,
+        ),
+        group=4,
+    )
+
+    application.add_error_handler(
+        error_handler
+    )
+
+    logger.info(
+        "HEROPRIME Site Botu başlatılıyor..."
+    )
+
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
         bootstrap_retries=5,
     )
 
+
+# =========================================================
+# START
+# =========================================================
 
 if __name__ == "__main__":
     main()
