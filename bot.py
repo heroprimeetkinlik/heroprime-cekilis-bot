@@ -22,7 +22,7 @@ from telegram.ext import (
 # =========================================================
 
 # Railway > Variables > BOT_TOKEN
-BOT_TOKEN = '8855111211:AAEmD37GcwYfgndcQTPGfnLpVoJ622Ot8ek'
+BOT_TOKEN = '8855111211:AAGljMKCCXXkOIVssRykaLm-qkv-exb1gP4'
 
 ADMIN_IDS_RAW = os.getenv("ADMIN_IDS", "8845737995").strip()
 ADMIN_RESULT_CHAT_ID_RAW = os.getenv(
