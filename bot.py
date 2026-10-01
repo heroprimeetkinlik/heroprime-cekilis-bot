@@ -195,6 +195,23 @@ def init_database():
     )
 
     # -----------------------------------------------------
+    # KULLANIM İSTATİSTİKLERİ / İŞLEM KAYDI
+    # -----------------------------------------------------
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            item TEXT NOT NULL,
+            chat_id INTEGER,
+            user_id INTEGER,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    # -----------------------------------------------------
     # BOT AYARLARI
     # -----------------------------------------------------
 
@@ -793,6 +810,46 @@ def delete_promotion(promo_id):
 
 
 # =========================================================
+# İSTATİSTİK VE DENETİM KAYDI
+# =========================================================
+
+def log_activity(kind, item, chat_id=None, user_id=None):
+    connection = get_db()
+    try:
+        connection.execute(
+            "INSERT INTO bot_activity(kind,item,chat_id,user_id,created_at) VALUES(?,?,?,?,?)",
+            (kind, str(item)[:120], chat_id, user_id, utc_now()),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+async def stats_command(update, context):
+    message = update.effective_message
+    user = update.effective_user
+    if not message or not user or not is_admin(user.id) or message.chat.type != "private":
+        return
+    connection = get_db()
+    try:
+        site_count = connection.execute("SELECT COUNT(*) n FROM sites").fetchone()["n"]
+        visible_count = connection.execute("SELECT COUNT(*) n FROM sites WHERE visible=1").fetchone()["n"]
+        promo_count = connection.execute("SELECT COUNT(*) n FROM promotions").fetchone()["n"]
+        usage = connection.execute("SELECT kind,item,COUNT(*) n FROM bot_activity GROUP BY kind,item ORDER BY n DESC LIMIT 15").fetchall()
+    finally:
+        connection.close()
+    lines = [f"• {escape(row['kind'])}: <code>{escape(row['item'])}</code> — {row['n']} kullanım" for row in usage]
+    await message.reply_text(
+        "📊 <b>HEROPRIME BOT İSTATİSTİKLERİ</b>\n\n"
+        f"🌐 Toplam site: <b>{site_count}</b>\n"
+        f"🟢 Görünür site: <b>{visible_count}</b>\n"
+        f"📢 Tanıtım: <b>{promo_count}</b>\n\n"
+        "<b>Son kullanım özeti</b>\n" + ("\n".join(lines) if lines else "Henüz kullanım kaydı yok."),
+        parse_mode="HTML",
+    )
+
+
+# =========================================================
 # BUTONLAR
 # =========================================================
 
@@ -987,6 +1044,7 @@ async def site_command(
     if not message:
         return
 
+    log_activity("site", "/site", message.chat_id, update.effective_user.id if update.effective_user else None)
     sites = get_sites(True)
 
     if not sites:
@@ -2571,6 +2629,8 @@ async def run_promotion_command(
     if not promo:
         return
 
+    log_activity("promotion", command, message.chat_id, update.effective_user.id if update.effective_user else None)
+
     try:
         buttons = json.loads(
             promo["buttons_json"]
@@ -2778,6 +2838,13 @@ def main():
         CommandHandler(
             "myid",
             my_id,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "istatistik",
+            stats_command,
         )
     )
 
