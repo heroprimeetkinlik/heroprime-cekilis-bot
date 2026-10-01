@@ -23,7 +23,7 @@ from telegram.ext import (
 
 # TOKEN'I KODUN İÇİNE YAZMA.
 # Railway -> Variables kısmından BOT_TOKEN olarak ekle.
-BOT_TOKEN = '8862557397:AAFy7B3L7wfdvaPMGAYdDCAcA-FBmwQVh1s'
+BOT_TOKEN = '8862557397:AAEo51RX-JCLzlQYrmhJfBfV2bjI9WhRZEQ'
 
 ADMIN_IDS_RAW = os.getenv(
     "ADMIN_IDS",
